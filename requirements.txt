@@ -1,0 +1,30 @@
+# fNIRS SDK Core Dependencies
+numpy>=1.21.0
+scipy>=1.7.0
+matplotlib>=3.5.0
+pandas>=1.3.0
+
+# Hardware Communication
+pyserial>=3.5
+
+# GUI and Visualization
+pyside6>=6.0.0
+pyqtgraph>=0.12.0
+
+# Configuration and Data
+toml>=0.10.0
+pyyaml>=6.0
+
+# Encryption and Security
+cryptography>=3.4.0
+
+# Development and Testing
+pytest>=6.0.0
+pytest-cov>=2.12.0
+
+# Documentation
+sphinx>=4.0.0
+sphinx-rtd-theme>=1.0.0
+
+# Optional: Cloud Integration
+requests>=2.25.0

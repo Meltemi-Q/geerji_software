@@ -1,0 +1,40 @@
+{
+  "layout_definitions": {
+    "default_6node": {
+      "description": "默认6节点配置，来源于原始配置",
+      "selected_nodes": [2, 6, 5, 11, 10, 9],
+      "layout_pattern": "scattered"
+    },
+    "triangle_center": {
+      "description": "三角形布局，选择中间6个节点",
+      "selected_nodes": [4, 5, 6, 7, 8, 9],
+      "layout_pattern": "triangle"
+    },
+    "rectangle_6node": {
+      "description": "矩形6节点布局",
+      "selected_nodes": [1, 2, 3, 10, 11, 12],
+      "layout_pattern": "rectangle"
+    },
+    "symmetric_6node": {
+      "description": "对称6节点布局",
+      "selected_nodes": [3, 4, 5, 8, 9, 10],
+      "layout_pattern": "symmetric"
+    }
+  },
+  "mapping_rules": {
+    "sources_per_dock": 3,
+    "detectors_per_dock": 4,
+    "total_sources_lumo": 18,
+    "total_detectors_lumo": 24,
+    "wavelengths": [1, 2],
+    "optode_naming": {
+      "sources": ["optode_a", "optode_b", "optode_c"],
+      "detectors": ["optode_1", "optode_2", "optode_3", "optode_4"]
+    }
+  },
+  "lumo_format": {
+    "channels_per_wavelength": 432,
+    "total_channels": 864,
+    "channel_order": "wavelength_first"
+  }
+}

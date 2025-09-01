@@ -1,0 +1,65 @@
+{
+  "timestamp": "2025-08-20T04:22:40.956Z",
+  "version": "3.1.0",
+  "config": {
+    "gridSize": 150,
+    "interpolationRadius": 25,
+    "gaussianSigma": 2,
+    "updateFrequency": 1000,
+    "useFloat32": true,
+    "enableCaching": true,
+    "maxCacheSize": 10,
+    "colorMap": "blue_red",
+    "valueRange": [
+      -1,
+      1
+    ],
+    "backgroundAlpha": 0,
+    "flipYForReport": false,
+    "idwPower": 2,
+    "scaleClampStrategy": "default",
+    "minScaleGuard": true,
+    "scaleDebugMode": true,
+    "maskAlpha": 0.3,
+    "maskDomainConsistency": true
+  },
+  "performance": {
+    "testResults": {
+      "单帧渲染": {
+        "totalTime": "20ms",
+        "avgTime": "20.00ms",
+        "fps": "N/A"
+      },
+      "连续10帧": {
+        "totalTime": "83ms",
+        "avgTime": "8.30ms",
+        "fps": "120.5fps"
+      },
+      "1秒连续渲染": {
+        "totalTime": "456ms",
+        "avgTime": "7.60ms",
+        "fps": "131.6fps"
+      }
+    },
+    "f8proEvaluation": {
+      "rating": "EXCELLENT",
+      "description": "可支持10Hz+实时更新"
+    },
+    "memoryUsage": {
+      "gridMemory": "87.9KB",
+      "colorMemory": "87.9KB",
+      "weightsMemory": "4394.5KB",
+      "kernelMemory": "0.7KB",
+      "totalMemory": "4.46MB",
+      "withinF8ProLimit": true
+    }
+  },
+  "memoryUsage": {
+    "gridMemory": "87.9KB",
+    "colorMemory": "87.9KB",
+    "weightsMemory": "4394.5KB",
+    "kernelMemory": "0.7KB",
+    "totalMemory": "4.46MB",
+    "withinF8ProLimit": true
+  }
+}

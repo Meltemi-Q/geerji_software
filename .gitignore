@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Test outputs
+test-results/
+comprehensive_test_screenshots/
+test_screenshots/
+screenshots/
+ui_screenshots/
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+backup/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.Zone.Identifier
+
+# Logs
+*.log
+logs/
+
+# Screenshots and images (keeping only essential ones)
+screenshot-*.png
+test-*.png
+brain-heatmap-quality-verification.png
+
+# Test reports
+AUTOMATED_TEST_REPORT.md
+comprehensive_test_results.json
+test_results.json
+test_summary_report.json
+UI_TEST_REPORT.md
+
+# Extra tools and utilities
+extra_tool/
+
+# Python test files
+test_*.py
+*test*.py
+analyze_*.py
+scroll_test*.py
+high_resolution_*.py
+fnirs_data_server.py
