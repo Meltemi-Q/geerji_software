@@ -108,9 +108,10 @@ export default {
     // 综合热力图数据 (训练结束后)
     const combinedHeatmap = ref(null)
     
-    // 历史数据存储（100帧循环缓冲）
+    // 历史数据存储（10秒滚动窗口）
     const dataHistory = ref([])
-    const MAX_HISTORY_FRAMES = 100
+    const TIME_WINDOW_SECONDS = 10
+    const TIME_WINDOW_MS = TIME_WINDOW_SECONDS * 1000
     const selectedTimeRange = ref({ start: 0, end: 100 })
     
     // 脑活跃度评分
@@ -189,7 +190,7 @@ export default {
     }
     
     /**
-     * 存储历史数据帧（100帧循环缓冲）
+     * 存储历史数据帧（10秒滚动窗口）
      */
     function storeHistoryFrame(hboData, hbrData, timestamp, frameId = null, stats = null) {
       console.log('[历史数据存储] 调用storeHistoryFrame，参数:', {
@@ -200,12 +201,13 @@ export default {
         statsAvailable: !!stats
       })
       
+      const now = Date.now()
       const historyFrame = {
         hbo: [...hboData],  // 深拷贝避免引用问题
         hbr: [...hbrData],
         timestamp,
         frameId: frameId || dataHistory.value.length,
-        recordTime: Date.now(),
+        recordTime: now,  // 使用统一的时间基准
         // 存储SDK统计数据（用于曲线显示）
         hboMean: stats?.hbo_stats?.mean || (hboData.reduce((a, b) => a + b, 0) / hboData.length),
         hbrMean: stats?.hbr_stats?.mean || (hbrData.reduce((a, b) => a + b, 0) / hbrData.length),
@@ -213,27 +215,40 @@ export default {
         hbrStats: stats?.hbr_stats || null
       }
       
+      // 添加新数据帧（保持数据累积，不删除历史数据）
       dataHistory.value.push(historyFrame)
+      
+      // 【修复】：保持数据累积存储，让图表显示时动态切片
+      // 不再删除历史数据，让数据持续累积以支持滚动曲线显示
+      console.log(`[数据累积] 存储第${dataHistory.value.length}帧，总时长: ${((now - (dataHistory.value[0]?.recordTime || now)) / 1000).toFixed(1)}秒`)
+      
       console.log('[历史数据存储] 数据帧已存储，当前历史长度:', dataHistory.value.length)
       
-      // 循环缓冲：超过100帧移除最早的
-      if (dataHistory.value.length > MAX_HISTORY_FRAMES) {
-        dataHistory.value.shift()
-      }
-      
-      // 更新时间选择范围
+      // 【修复】更新时间选择范围（支持数据累积的滚动显示）
+      const totalDataAge = dataHistory.value.length > 0 ? (now - dataHistory.value[0].recordTime) / 1000 : 0
       selectedTimeRange.value.end = dataHistory.value.length - 1
-      if (selectedTimeRange.value.start > dataHistory.value.length - 1) {
-        selectedTimeRange.value.start = Math.max(0, dataHistory.value.length - 50)
+      
+      if (totalDataAge < TIME_WINDOW_SECONDS) {
+        // 不满10秒：显示所有数据
+        selectedTimeRange.value.start = 0
+        console.log(`[滚动显示] 数据不满${TIME_WINDOW_SECONDS}秒(${totalDataAge.toFixed(1)}s)，显示所有${dataHistory.value.length}帧`)
+      } else {
+        // 满10秒：滚动显示最新10秒的数据帧
+        const recentFrames = Math.ceil(TIME_WINDOW_SECONDS * 8) // 8Hz * 10秒 ≈ 80帧
+        selectedTimeRange.value.start = Math.max(0, dataHistory.value.length - recentFrames)
+        console.log(`[滚动显示] 数据满${TIME_WINDOW_SECONDS}秒，滚动显示最新${recentFrames}帧 (第${selectedTimeRange.value.start}-${selectedTimeRange.value.end}帧)`)
       }
     }
     
     /**
-     * 从历史数据中获取指定时间段的数据
+     * 从历史数据中获取指定时间段的数据（支持10秒滚动窗口）
      */
     function getHistoryData(startIdx = null, endIdx = null) {
       if (!startIdx && !endIdx) {
-        return dataHistory.value
+        // 默认返回最近10秒的数据
+        const now = Date.now()
+        const cutoffTime = now - TIME_WINDOW_MS
+        return dataHistory.value.filter(frame => frame.recordTime >= cutoffTime)
       }
       
       const start = startIdx || selectedTimeRange.value.start
@@ -572,7 +587,7 @@ export default {
         } else {
           console.log('[数据流调试] 训练未激活，跳过数据更新')
         }
-      }, 500) // 2Hz更新频率
+      }, 125) // 8Hz更新频率以匹配SDK
     }
     
     // 停止数据模拟

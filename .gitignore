@@ -70,3 +70,57 @@ analyze_*.py
 scroll_test*.py
 high_resolution_*.py
 fnirs_data_server.py
+
+# 视频文件 (所有格式)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+*.webm
+*.m4v
+*.3gp
+
+# 大文件和媒体文件
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.iso
+*.img
+*.dmg
+
+# 音频文件
+*.mp3
+*.wav
+*.flac
+*.aac
+*.ogg
+
+# 图片文件 (大尺寸)
+*.psd
+*.ai
+*.sketch
+
+# JavaScript测试和调试文件
+*test*.js
+*debug*.js
+*monitor*.js
+*validation*.js
+curve_scroll_*.js
+complete_flow_*.js
+heatmap_validation_*.js
+screenshot_*.js
+final_*.js
+
+# 测试结果目录
+test_results/
+monitoring_logs.json
+*_logs.json
+*test_report*.json
+
+# 临时文件夹
+temp/
+temporary/
+cache/

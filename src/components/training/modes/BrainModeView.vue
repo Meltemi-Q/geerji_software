@@ -38,25 +38,46 @@
             class="heatmap-svg-container"
             :style="heatmapContainerStyle"
           >
-            <!-- 覆盖区域（12-node布局外轮廓，多边形） -->
-            <svg 
-              ref="coverageOverlayRef" 
-              class="coverage-overlay"
-              :viewBox="overlayViewBox"
-              preserveAspectRatio="none"
-            >
-              <polygon 
-                v-if="overlayPoints"
-                :points="overlayPoints"
-                fill="rgba(96,165,250,0.6)"
-                stroke="rgba(255,255,255,0.2)"
-                stroke-width="1.75"
-                stroke-linejoin="round"
-                stroke-linecap="round"
-              />
-            </svg>
+            <!-- report 模式：直接渲染子组件（ECharts），放在图片与D3层之间 -->
+            <HeatmapReportStyleView
+              v-if="useReportHeatmap"
+              :hboData="hboData"
+              :channelPositions="reportChannelPositions"
+              :layoutDimensions="reportLayoutDimensions"
+              :gridSize="120"
+              :kNeighbors="16"
+              :gaussianSigma="2.0"
+              :valueDomain="{min:-0.05,max:0.05}"
+              colorMap="Spectral"
+              :discreteLevels="9"
+              :showContours="true"
+              :showColorbar="true"
+              :showChannels="false"
+              :overlayEnabled="true"
+              :updateIntervalMs="500"
+              :showControls="false"
+            />
 
-            <!-- D3 SVG热力图将在这里渲染（Canvas 追加在该容器内，位于覆盖层之上） -->
+            <!-- D3模式：覆盖层 + Canvas（原有实现） -->
+            <template v-else>
+              <svg 
+                ref="coverageOverlayRef" 
+                class="coverage-overlay"
+                :viewBox="overlayViewBox"
+                preserveAspectRatio="none"
+              >
+                <polygon 
+                  v-if="overlayPoints"
+                  :points="overlayPoints"
+                  fill="rgba(96,165,250,0.6)"
+                  stroke="rgba(255,255,255,0.2)"
+                  stroke-width="1.75"
+                  stroke-linejoin="round"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <!-- D3 SVG热力图将在这里渲染（Canvas 追加在该容器内，位于覆盖层之上） -->
+            </template>
           </div>
           
           <!-- 加载状态 -->
@@ -90,9 +111,11 @@ import { HeatmapCoordinator } from './heatmap/HeatmapCoordinator.js'
 import { D3HeatmapRenderer } from './heatmap/D3HeatmapRenderer.js'
 import * as d3 from 'd3'
 import fullLayout from '../../../../fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json'
+import HeatmapReportStyleView from './heatmap/HeatmapReportStyleView.vue'
 
 export default {
   name: 'BrainModeView',
+  components: { HeatmapReportStyleView },
   props: {
     hboData: {
       type: Array,
@@ -132,6 +155,11 @@ export default {
     // 覆盖层数据（SVG 多边形）
     const overlayPoints = ref('')
     const overlayViewBox = ref('0 0 0 0')
+
+    // 新增：报告风格热力图开关与数据
+    const useReportHeatmap = ref(false)
+    const reportChannelPositions = ref([])
+    const reportLayoutDimensions = ref({ x: 188.72, y: 110.29 })
     
     // 12-node覆盖区域状态
     let nodeLayoutData = null
@@ -540,21 +568,24 @@ export default {
         heatmapCoordinator = new HeatmapCoordinator()
         heatmapCoordinator.setLayoutBounds(channelData.layoutDimensions)
         
-        // 3. 初始化D3渲染器
+        // 3. 初始化渲染：根据开关决定
         if (heatmapContainerRef.value) {
-          d3Renderer = new D3HeatmapRenderer(heatmapContainerRef.value, {
-            showDebugPoints: showDebugInfo.value,
-            influenceRadius: 10, // mm（通道级清晰显示）
-            gridSize: 50
-          })
-          
-          d3Renderer.setChannelData(channelData)
+          // 供报告风格组件使用的数据
+          reportChannelPositions.value = channelData.channelPositions || []
+          reportLayoutDimensions.value = channelData.layoutDimensions || reportLayoutDimensions.value
 
-          // 先初始化覆盖层，再初始化热力图Canvas，确保覆盖层在下方
-          updateCoverageOverlay({ width: 400, height: 300 })
+          if (!useReportHeatmap.value) {
+            d3Renderer = new D3HeatmapRenderer(heatmapContainerRef.value, {
+              showDebugPoints: showDebugInfo.value,
+              influenceRadius: 10,
+              gridSize: 50
+            })
+            d3Renderer.setChannelData(channelData)
 
-          // 初始化Canvas（使用默认尺寸）
-          d3Renderer.initializeSVG(400, 300)
+            // 覆盖层（仅D3模式下本地绘制；报告风格由子组件处理）
+            updateCoverageOverlay({ width: 400, height: 300 })
+            d3Renderer.initializeSVG(400, 300)
+          }
         }
         
         // 4. 设置响应式更新
@@ -638,17 +669,18 @@ export default {
      * 更新热力图尺寸
      */
     function updateHeatmapSize(bounds) {
-      if (!d3Renderer || !bounds) return
+      if (!bounds) return
       
       try {
-        // 重新初始化SVG以匹配新尺寸
-        d3Renderer.initializeSVG(bounds.width, bounds.height)
-
-        // 同步更新覆盖层尺寸与多边形
-        updateCoverageOverlay(bounds)
+        if (!useReportHeatmap.value && d3Renderer) {
+          // 重新初始化SVG以匹配新尺寸
+          d3Renderer.initializeSVG(bounds.width, bounds.height)
+          // 同步更新覆盖层尺寸与多边形
+          updateCoverageOverlay(bounds)
+        }
         
         // 如果有当前数据，重新渲染
-        if (props.hboData && props.hboData.length > 0) {
+        if (!useReportHeatmap.value && props.hboData && props.hboData.length > 0) {
           const processedData = processHboData(props.hboData)
           d3Renderer.render(processedData)
         }
@@ -679,6 +711,7 @@ export default {
      * 更新热力图渲染
      */
     function updateHeatmapRender() {
+      if (useReportHeatmap.value) return
       if (!d3Renderer || !props.hboData) return
       
       try {
@@ -835,6 +868,7 @@ export default {
      * 基于 fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json 的 optode 2D 坐标
      */
     function updateCoverageOverlay(bounds) {
+      if (useReportHeatmap.value) return
       try {
         if (!coverageOverlayRef.value || !bounds) return
 
@@ -923,6 +957,13 @@ export default {
     // 组件挂载
     onMounted(async () => {
       console.log('[BrainModeView] 组件已挂载，开始初始化...')
+      // URL参数开关：?reportHeatmap=1 或 ?heatmap=report
+      try {
+        const params = new URLSearchParams(window.location.search)
+        if (params.get('reportHeatmap') === '1' || params.get('heatmap') === 'report') {
+          useReportHeatmap.value = true
+        }
+      } catch {}
       await nextTick()
       await initializeHeatmapSystem()
     })
@@ -957,6 +998,9 @@ export default {
       brainImageSrc,
       showDebugInfo,
       debugInfo,
+      useReportHeatmap,
+      reportChannelPositions,
+      reportLayoutDimensions,
       
       // 方法
       formatPercentage,
