@@ -124,3 +124,15 @@ monitoring_logs.json
 temp/
 temporary/
 cache/
+
+# 具体的大文件和目录
+src/assets/videos/
+.playwright-mcp/
+extra_tool/
+fnirs_sdk/encrypted_data/
+*.enc
+
+# 大尺寸图片文件 (>1MB)
+coin.png
+src/assets/coin.png
+src/assets/images/coin.png
