@@ -42,6 +42,14 @@
   - 5.4 并存不冲突：不修改 `BrainModeView.vue` 内现有 D3 路线；父级可根据开关决定挂载哪一个组件。
   - 5.5 配置透传：通过 props 统一传入参数；支持运行时更新。
 
+- 功能6：12-node 覆盖背景层（介于底图与热力图之间）
+  - 6.1 数据来源：`fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json`（使用 `docks[*].optodes[*].coordinates_2d` 与 `dimensions.dimensions_2d`）。
+  - 6.2 构型算法：以全部 optode 2D 点计算外轮廓（优先 concave hull；若不可用则 convex hull 并外扩 3mm）。
+  - 6.3 坐标映射：Triangle(mm) → 像素(px)，与热力图一致（含 Y 轴翻转），在容器尺寸变化时重算并更新。
+  - 6.4 层级顺序：底层=大脑图片；中间层=12-node 覆盖多边形；顶层=热力图（Canvas/SVG）。
+  - 6.5 颜色规范：覆盖多边形填充色=“热力图颜色条的中心色”（当前 colorMap 的中点）；不透明度默认 0.6；描边 1.5px、圆角（linejoin/linecap=round），描边色为中心色的浅亮变体（alpha≈0.2）。
+  - 6.6 显示开关：支持一键启用/禁用覆盖层；默认启用。
+
 ### 三、配置参数（Props/Options）
 - gridSize：number（默认 120）
 - interpolation: 'idw' | 'rbf'（默认 'idw'）
@@ -55,15 +63,25 @@
 - showChannels：boolean（默认 false）
 - useWorker：boolean（默认 true）
 - updateIntervalMs：number（默认 500）
+- overlayEnabled：boolean（默认 true）
+- overlayFollowColorMap：boolean（默认 true，使用色条中心色）
+- overlayOpacity：number（默认 0.6）
+- overlayStrokeWidth：number（默认 1.5）
+- overlayEdgeBufferMm：number（默认 3）
+- overlayHullType：'concave' | 'convex'（默认 'convex'）
 
 ### 四、数据契约
 - 输入：
   - channelPositions：Array<{ position: [x_mm, y_mm], ... }>（Triangle 2D，mm）
   - layoutDimensions：{ x: mm, y: mm }
   - hboValues：number[]（长度与 channelPositions 一致）
+- 覆盖层输入：
+  - fullLayout：`fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json`
+  - optodePoints2D：从 fullLayout 提取的全部 `coordinates_2d`
 - 输出（到渲染层）：
   - gridValues：Float32Array( gridSize×gridSize )（NaN 代表掩膜外）
   - contours：路径/多边形数据（可选，基于 d3-contours）
+  - overlayPolygon：SVG points 字符串或路径数据（随容器尺寸动态更新）
 
 ### 五、性能预算（在线模式）
 - 目标：500–1000ms/帧（含计算与绘制）。
@@ -75,6 +93,7 @@
   - 固定色域渲染，连续多帧颜色稳定，无明显“跳色”。
   - 蓝-黄-绿-红色谱，分区与层次清晰；等高线与色条正确。
   - 掩膜裁切正确，无越界涂抹；通道可选显示。
+  - 覆盖层：多边形边界与 fullLayout 点云外轮廓一致；填充色与当前 colorMap 中心色一致（允许 ≤5% 色差）；叠放顺序正确（位于底图与热力图之间）。
 - 性能：
   - 1920×1080 环境：在线模式默认配置下 ≥ 1fps（建议 2fps）；UI 不卡顿。
   - 尺寸变化后 200ms 内完成重建并恢复更新。

@@ -23,13 +23,40 @@
             @load="onBrainImageLoad"
           />
           
+          <!-- 12-node覆盖区域容器 (位于热力图下方) -->
+          <div 
+            ref="coverageAreaRef"
+            class="coverage-area-container"
+            :style="heatmapContainerStyle"
+          >
+            <!-- 12-node设备覆盖区域多边形 -->
+          </div>
+
           <!-- SVG热力图容器 -->
           <div 
             ref="heatmapContainerRef" 
             class="heatmap-svg-container"
             :style="heatmapContainerStyle"
           >
-            <!-- D3 SVG热力图将在这里渲染 -->
+            <!-- 覆盖区域（12-node布局外轮廓，多边形） -->
+            <svg 
+              ref="coverageOverlayRef" 
+              class="coverage-overlay"
+              :viewBox="overlayViewBox"
+              preserveAspectRatio="none"
+            >
+              <polygon 
+                v-if="overlayPoints"
+                :points="overlayPoints"
+                fill="rgba(96,165,250,0.6)"
+                stroke="rgba(255,255,255,0.2)"
+                stroke-width="1.75"
+                stroke-linejoin="round"
+                stroke-linecap="round"
+              />
+            </svg>
+
+            <!-- D3 SVG热力图将在这里渲染（Canvas 追加在该容器内，位于覆盖层之上） -->
           </div>
           
           <!-- 加载状态 -->
@@ -61,6 +88,8 @@ import { trainingCommon } from '../mixins/TrainingCommon.js'
 import { TriangleDataProcessor } from './heatmap/TriangleDataProcessor.js'
 import { HeatmapCoordinator } from './heatmap/HeatmapCoordinator.js'
 import { D3HeatmapRenderer } from './heatmap/D3HeatmapRenderer.js'
+import * as d3 from 'd3'
+import fullLayout from '../../../../fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json'
 
 export default {
   name: 'BrainModeView',
@@ -83,6 +112,8 @@ export default {
     const brainDisplayRef = ref(null)
     const brainImageRef = ref(null)
     const heatmapContainerRef = ref(null)
+    const coverageOverlayRef = ref(null)
+    const coverageAreaRef = ref(null)
     
     // 状态管理
     const isLoading = ref(true)
@@ -97,6 +128,15 @@ export default {
     let d3Renderer = null
     let updateTimer = null
     let resizeCleanup = null
+
+    // 覆盖层数据（SVG 多边形）
+    const overlayPoints = ref('')
+    const overlayViewBox = ref('0 0 0 0')
+    
+    // 12-node覆盖区域状态
+    let nodeLayoutData = null
+    let coverageAreaSvg = null
+    const triangleDimensions = ref({ x: 188.72346922981956, y: 110.29199999999999 }) // mm
     
     // 使用共享逻辑
     const { formatPercentage } = trainingCommon()
@@ -127,6 +167,354 @@ export default {
     })
     
     /**
+     * 加载12-node布局数据 (使用renumbered_full_layout.json获取完整12个dock)
+     */
+    async function loadNodeLayoutData() {
+      try {
+        // 使用完整的12-node布局文件
+        const response = await fetch('/fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json')
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+        nodeLayoutData = await response.json()
+        
+        // 注意：坐标系统使用与热力图相同的dimensions
+        // 热力图使用的是layout.json，所以我们也要使用相同的尺寸
+        triangleDimensions.value = nodeLayoutData.dimensions.dimensions_2d
+        
+        console.log('[BrainModeView] 12-node完整布局数据加载成功:', {
+          configFile: 'renumbered_full_layout.json',
+          dimensions: triangleDimensions.value,
+          docksCount: nodeLayoutData.docks?.length || 0,
+          totalOptodes: nodeLayoutData.docks?.reduce((sum, dock) => sum + (dock.optodes?.length || 0), 0)
+        })
+        return nodeLayoutData
+      } catch (error) {
+        console.error('[BrainModeView] 12-node布局数据加载失败:', error)
+        throw error
+      }
+    }
+    
+    /**
+     * 提取所有12个node的最外围坐标点 (每个dock选择最极端的点)
+     */
+    function extractNodeBoundaryCoordinates(layoutData) {
+      const boundaryPoints = []
+      if (!layoutData?.docks) return boundaryPoints
+      
+      layoutData.docks.forEach(dock => {
+        if (dock.optodes && Array.isArray(dock.optodes)) {
+          // 对每个dock，找到最外围的点
+          let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+          let minXPoint, maxXPoint, minYPoint, maxYPoint
+          
+          dock.optodes.forEach(optode => {
+            if (optode.coordinates_2d) {
+              const { x, y } = optode.coordinates_2d
+              
+              if (x < minX) { minX = x; minXPoint = { x, y, dock_id: dock.dock_id, optode_id: optode.optode_id } }
+              if (x > maxX) { maxX = x; maxXPoint = { x, y, dock_id: dock.dock_id, optode_id: optode.optode_id } }
+              if (y < minY) { minY = y; minYPoint = { x, y, dock_id: dock.dock_id, optode_id: optode.optode_id } }
+              if (y > maxY) { maxY = y; maxYPoint = { x, y, dock_id: dock.dock_id, optode_id: optode.optode_id } }
+            }
+          })
+          
+          // 添加每个dock的边界点（去重）
+          const dockBoundaryPoints = [minXPoint, maxXPoint, minYPoint, maxYPoint]
+          dockBoundaryPoints.forEach(point => {
+            if (point && !boundaryPoints.some(p => p.x === point.x && p.y === point.y)) {
+              boundaryPoints.push(point)
+            }
+          })
+        }
+      })
+      
+      console.log('[BrainModeView] 12-node边界坐标提取完成:', {
+        totalBoundaryPoints: boundaryPoints.length,
+        samplePoints: boundaryPoints.slice(0, 3)
+      })
+      return boundaryPoints
+    }
+    
+    /**
+     * 计算Convex Hull (Graham扫描算法)
+     */
+    function calculateConvexHull(points) {
+      if (points.length < 3) return points
+      
+      // 按x坐标排序，如果x相同则按y坐标排序
+      const sortedPoints = [...points].sort((a, b) => {
+        if (a.x === b.x) return a.y - b.y
+        return a.x - b.x
+      })
+      
+      // 计算下半部分的凸包
+      const lower = []
+      for (let i = 0; i < sortedPoints.length; i++) {
+        while (lower.length >= 2 && 
+               crossProduct(lower[lower.length-2], lower[lower.length-1], sortedPoints[i]) <= 0) {
+          lower.pop()
+        }
+        lower.push(sortedPoints[i])
+      }
+      
+      // 计算上半部分的凸包
+      const upper = []
+      for (let i = sortedPoints.length - 1; i >= 0; i--) {
+        while (upper.length >= 2 && 
+               crossProduct(upper[upper.length-2], upper[upper.length-1], sortedPoints[i]) <= 0) {
+          upper.pop()
+        }
+        upper.push(sortedPoints[i])
+      }
+      
+      // 移除重复的点
+      upper.pop()
+      lower.pop()
+      
+      const convexHull = lower.concat(upper)
+      console.log('[BrainModeView] 12-node Convex Hull计算完成:', {
+        originalPoints: points.length,
+        hullPoints: convexHull.length
+      })
+      
+      return convexHull
+    }
+    
+    /**
+     * 计算叉积 (用于凸包算法)
+     */
+    function crossProduct(O, A, B) {
+      return (A.x - O.x) * (B.y - O.y) - (A.y - O.y) * (B.x - O.x)
+    }
+    
+    /**
+     * 外扩多边形边界 (3mm)
+     */
+    function expandPolygon(points, expandDistance = 3) {
+      if (points.length < 3) return points
+      
+      // 计算多边形重心
+      const centroid = {
+        x: points.reduce((sum, p) => sum + p.x, 0) / points.length,
+        y: points.reduce((sum, p) => sum + p.y, 0) / points.length
+      }
+      
+      // 从重心向外扩展每个点
+      const expandedPoints = points.map(point => {
+        const dx = point.x - centroid.x
+        const dy = point.y - centroid.y
+        const distance = Math.sqrt(dx * dx + dy * dy)
+        
+        if (distance === 0) return point // 避免除零
+        
+        const expandRatio = (distance + expandDistance) / distance
+        
+        return {
+          x: centroid.x + dx * expandRatio,
+          y: centroid.y + dy * expandRatio
+        }
+      })
+      
+      console.log('[BrainModeView] 12-node覆盖区域外扩完成:', {
+        originalPoints: points.length,
+        expandDistance: expandDistance + 'mm'
+      })
+      
+      return expandedPoints
+    }
+    
+    /**
+     * Triangle坐标系到像素坐标的映射 (使用与热力图完全相同的转换逻辑)
+     */
+    function triangleToPixelCoordinates(trianglePoints, containerBounds) {
+      if (!containerBounds || !heatmapCoordinator) return []
+      
+      // 使用HeatmapCoordinator的layoutBounds (与热力图相同)
+      const layoutBounds = heatmapCoordinator.getLayoutBounds()
+      if (!layoutBounds) return []
+      
+      const { width: containerWidth, height: containerHeight } = containerBounds
+      const { x: layoutWidth, y: layoutHeight } = layoutBounds
+      
+      // 使用与热力图完全相同的缩放和偏移计算
+      const scaleX = containerWidth / layoutWidth
+      const scaleY = containerHeight / layoutHeight
+      const scale = Math.min(scaleX, scaleY)
+      
+      const scaledWidth = layoutWidth * scale
+      const scaledHeight = layoutHeight * scale
+      const offsetX = (containerWidth - scaledWidth) / 2
+      const offsetY = (containerHeight - scaledHeight) / 2
+      
+      // 使用与热力图相同的坐标转换 (注意Y轴翻转)
+      const pixelPoints = trianglePoints.map(point => {
+        // 与D3HeatmapRenderer中的坐标转换保持一致
+        const pixelX = point.x * scale + offsetX
+        const pixelY = (layoutHeight - point.y) * scale + offsetY // Y轴翻转
+        
+        return { x: pixelX, y: pixelY }
+      })
+      
+      console.log('[BrainModeView] 12-node坐标转换（使用热力图相同逻辑）:', {
+        layoutBounds: layoutBounds,
+        containerSize: { width: containerWidth, height: containerHeight },
+        scale: scale.toFixed(3),
+        offset: { x: offsetX.toFixed(1), y: offsetY.toFixed(1) },
+        样例转换: pixelPoints.slice(0, 2).map((p, i) => ({
+          原始: trianglePoints[i],
+          像素: p
+        }))
+      })
+      
+      return pixelPoints
+    }
+    
+    /**
+     * 创建12-node覆盖区域SVG多边形
+     */
+    function createCoverageAreaSVG(pixelPoints, containerBounds) {
+      if (!coverageAreaRef.value || pixelPoints.length < 3) return
+      
+      // 清除现有的SVG
+      coverageAreaRef.value.innerHTML = ''
+      
+      // 创建SVG元素
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('width', containerBounds.width)
+      svg.setAttribute('height', containerBounds.height)
+      svg.style.position = 'absolute'
+      svg.style.top = '0'
+      svg.style.left = '0'
+      svg.style.pointerEvents = 'none'
+      svg.style.zIndex = '2' // 位于大脑图片之上，热力图之下
+      
+      // 创建多边形路径
+      const pathData = pixelPoints.map((point, index) => {
+        return `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+      }).join(' ') + ' Z'
+      
+      // 创建path元素
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', pathData)
+      path.style.fill = 'rgba(255,200,0,0.2)' // 金黄色半透明填充，更醒目
+      path.style.stroke = 'rgba(255,150,0,0.9)' // 橙色描边，高对比度
+      path.style.strokeWidth = '3' // 加粗描边
+      path.style.strokeDasharray = '10,5' // 虚线样式，更容易识别
+      
+      svg.appendChild(path)
+      coverageAreaRef.value.appendChild(svg)
+      
+      coverageAreaSvg = svg
+      
+      console.log('[BrainModeView] 12-node覆盖区域SVG创建完成:', {
+        containerSize: containerBounds,
+        polygonPoints: pixelPoints.length,
+        pathData: pathData.substring(0, 100) + '...'
+      })
+    }
+    
+    /**
+     * 更新12-node覆盖区域 (使用12个dock的实际位置形成倒梯形)
+     */
+    async function updateCoverageArea() {
+      if (!brainImageRef.value || !heatmapCoordinator || !nodeLayoutData) return
+      
+      try {
+        console.log('[BrainModeView] 开始更新12-node覆盖区域（倒梯形形状）...')
+        
+        // 1. 获取容器边界 (与热力图完全相同)
+        const containerBounds = heatmapCoordinator.calculateHeatmapBounds(
+          brainImageRef.value, 
+          brainDisplayRef.value
+        )
+        if (!containerBounds) {
+          console.warn('[BrainModeView] 无法获取容器边界')
+          return
+        }
+        
+        // 2. 从12个dock中提取每个dock的中心位置
+        const dockCenters = []
+        if (nodeLayoutData && nodeLayoutData.docks) {
+          nodeLayoutData.docks.forEach(dock => {
+            if (dock.optodes && dock.optodes.length > 0) {
+              // 计算每个dock的中心位置
+              let sumX = 0, sumY = 0
+              let count = 0
+              
+              dock.optodes.forEach(optode => {
+                if (optode.coordinates_2d) {
+                  sumX += optode.coordinates_2d.x
+                  sumY += optode.coordinates_2d.y
+                  count++
+                }
+              })
+              
+              if (count > 0) {
+                dockCenters.push({
+                  x: sumX / count,
+                  y: sumY / count,
+                  dock_id: dock.dock_id
+                })
+              }
+            }
+          })
+        }
+        
+        console.log('[BrainModeView] 12个dock中心位置计算完成:', {
+          dock数量: dockCenters.length,
+          dock_ids: dockCenters.map(d => d.dock_id),
+          样例坐标: dockCenters.slice(0, 3).map(d => ({
+            dock: d.dock_id,
+            x: d.x.toFixed(2), 
+            y: d.y.toFixed(2)
+          }))
+        })
+        
+        // 3. 根据12个dock的实际布局，直接定义倒梯形的关键点
+        // 12-node设备实际布局是3行4列，形成倒梯形
+        if (dockCenters.length !== 12) {
+          console.warn('[BrainModeView] dock数量不是12个:', dockCenters.length)
+        }
+        
+        // 4. 使用所有dock中心点计算凸包（会自然形成倒梯形）
+        const convexHull = calculateConvexHull(dockCenters)
+        console.log('[BrainModeView] 12-node凸包计算完成（倒梯形）:', {
+          dock中心点数: dockCenters.length,
+          凸包点数: convexHull.length,
+          形状: '倒梯形'
+        })
+        
+        // 5. 外扩形成明显的包边区域 (8mm外扩，让倒梯形更明显)
+        const expandedHull = expandPolygon(convexHull, 8)
+        
+        // 6. 转换为像素坐标
+        const pixelPoints = triangleToPixelCoordinates(expandedHull, containerBounds)
+        console.log('[BrainModeView] 12-node倒梯形坐标转换完成:', {
+          Triangle坐标范围: {
+            x: [Math.min(...expandedHull.map(p => p.x)), Math.max(...expandedHull.map(p => p.x))],
+            y: [Math.min(...expandedHull.map(p => p.y)), Math.max(...expandedHull.map(p => p.y))]
+          },
+          像素点数: pixelPoints.length
+        })
+        
+        // 7. 创建倒梯形SVG覆盖区域
+        createCoverageAreaSVG(pixelPoints, containerBounds)
+        
+        console.log('[BrainModeView] ✅ 12-node倒梯形覆盖区域创建成功!', {
+          形状: '倒梯形',
+          dock数量: dockCenters.length,
+          凸包点数: convexHull.length,
+          容器尺寸: `${containerBounds.width}×${containerBounds.height}`
+        })
+        
+      } catch (error) {
+        console.error('[BrainModeView] ❌ 12-node覆盖区域更新失败:', error)
+      }
+    }
+    
+
+    /**
      * 初始化热力图系统
      */
     async function initializeHeatmapSystem() {
@@ -134,6 +522,9 @@ export default {
         console.log('[BrainModeView] 开始初始化热力图系统...')
         isLoading.value = true
         hasError.value = false
+        
+        // 0. 加载12-node布局数据 (用于覆盖区域)
+        await loadNodeLayoutData()
         
         // 1. 初始化Triangle数据处理器
         triangleProcessor = new TriangleDataProcessor()
@@ -158,8 +549,11 @@ export default {
           })
           
           d3Renderer.setChannelData(channelData)
-          
-          // 初始化SVG（使用默认尺寸）
+
+          // 先初始化覆盖层，再初始化热力图Canvas，确保覆盖层在下方
+          updateCoverageOverlay({ width: 400, height: 300 })
+
+          // 初始化Canvas（使用默认尺寸）
           d3Renderer.initializeSVG(400, 300)
         }
         
@@ -210,6 +604,8 @@ export default {
           updateHeatmapSize(bounds)
           // 立即同步位置
           syncHeatmapPosition()
+          // 同步更新12-node覆盖区域
+          updateCoverageArea()
         },
         100 // 减少防抖时间以获得更快的响应
       )
@@ -217,11 +613,15 @@ export default {
       // 添加额外的实时同步机制
       const syncInterval = setInterval(() => {
         syncHeatmapPosition()
+        // 每500ms也同步覆盖区域位置
+        if (nodeLayoutData) updateCoverageArea()
       }, 500) // 每500ms检查一次位置
       
       // 监听窗口滚动事件（如果有）
       const handleScroll = () => {
         syncHeatmapPosition()
+        // 滚动时也同步覆盖区域
+        if (nodeLayoutData) updateCoverageArea()
       }
       window.addEventListener('scroll', handleScroll, { passive: true })
       
@@ -243,6 +643,9 @@ export default {
       try {
         // 重新初始化SVG以匹配新尺寸
         d3Renderer.initializeSVG(bounds.width, bounds.height)
+
+        // 同步更新覆盖层尺寸与多边形
+        updateCoverageOverlay(bounds)
         
         // 如果有当前数据，重新渲染
         if (props.hboData && props.hboData.length > 0) {
@@ -358,7 +761,7 @@ export default {
         width: containerRect?.width, height: containerRect?.height
       })
       
-      // 图片加载完成后更新热力图尺寸
+      // 图片加载完成后更新热力图尺寸和覆盖区域
       nextTick(() => {
         if (heatmapCoordinator && brainImageRef.value) {
           console.log('[BrainModeView] 开始计算热力图边界...')
@@ -366,6 +769,8 @@ export default {
           console.log('[BrainModeView] 计算得到的边界:', bounds)
           if (bounds) {
             updateHeatmapSize(bounds)
+            // 同时更新12-node覆盖区域
+            updateCoverageArea()
           }
         }
       })
@@ -424,6 +829,63 @@ export default {
         }
       })
     }
+
+    /**
+     * 计算并更新覆盖区域多边形
+     * 基于 fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json 的 optode 2D 坐标
+     */
+    function updateCoverageOverlay(bounds) {
+      try {
+        if (!coverageOverlayRef.value || !bounds) return
+
+        // 1) 收集全部 optode 的二维坐标（mm）
+        const pointsMm = []
+        try {
+          const docks = fullLayout?.docks || []
+          docks.forEach(dock => {
+            (dock.optodes || []).forEach(opt => {
+              const c2d = opt?.coordinates_2d
+              if (c2d && typeof c2d.x === 'number' && typeof c2d.y === 'number') {
+                pointsMm.push([c2d.x, c2d.y])
+              }
+            })
+          })
+        } catch (e) {
+          console.warn('[BrainModeView] 解析full layout失败', e)
+        }
+
+        if (pointsMm.length < 3) {
+          overlayPoints.value = ''
+          overlayViewBox.value = `0 0 ${bounds.width} ${bounds.height}`
+          return
+        }
+
+        // 2) 计算外轮廓（凸包）；如需更贴合可替换为 concave hull
+        const hullMm = d3.polygonHull(pointsMm)
+        if (!hullMm || hullMm.length < 3) {
+          overlayPoints.value = ''
+          overlayViewBox.value = `0 0 ${bounds.width} ${bounds.height}`
+          return
+        }
+
+        // 3) mm → px 映射（与热力图一致的坐标变换，Y 轴翻转）
+        const dims = fullLayout?.dimensions?.dimensions_2d || { x: 188.72, y: 110.29 }
+        const widthPx = bounds.width
+        const heightPx = bounds.height
+        const pointsPx = hullMm.map(([xMm, yMm]) => {
+          const x = (xMm / dims.x) * widthPx
+          const y = heightPx - (yMm / dims.y) * heightPx
+          return [x, y]
+        })
+
+        // 4) 生成 points 属性字符串
+        overlayPoints.value = pointsPx.map(([x, y]) => `${x},${y}`).join(' ')
+        overlayViewBox.value = `0 0 ${widthPx} ${heightPx}`
+
+      } catch (error) {
+        console.error('[BrainModeView] 覆盖区域更新失败:', error)
+      }
+    }
     
     /**
      * 清理资源
@@ -476,6 +938,7 @@ export default {
       brainDisplayRef,
       brainImageRef,
       heatmapContainerRef,
+      coverageAreaRef,
       
       // 状态
       isLoading,
@@ -486,6 +949,9 @@ export default {
       
       // 计算属性
       heatmapContainerStyle,
+      coverageOverlayRef,
+      overlayPoints,
+      overlayViewBox,
       
       // 配置
       brainImageSrc,
@@ -593,6 +1059,15 @@ export default {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
 }
 
+/* 12-node覆盖区域容器 - 位于大脑图片之上，热力图之下 */
+.coverage-area-container {
+  position: absolute;
+  pointer-events: none;
+  z-index: 2;
+  border: none !important;
+  outline: none !important;
+}
+
 /* SVG热力图容器 - 移除边框，确保无干扰 */
 .heatmap-svg-container {
   position: absolute;
@@ -600,6 +1075,16 @@ export default {
   z-index: 5;
   border: none !important;
   outline: none !important;
+}
+
+/* 覆盖区域层（位于热力图Canvas下方，通过DOM插入顺序保证在下层） */
+.coverage-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* 加载状态 */
