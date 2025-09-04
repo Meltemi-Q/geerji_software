@@ -85,6 +85,12 @@ export class IDWInterpolator {
     for (let i = 0; i < gridSize * gridSize; i++) {
       const neighborList = neighbors[i]
       
+      // 检查三角形mask约束 (6dock模式)
+      if (gridInfo.triangleMask && !gridInfo.triangleMask[i]) {
+        resultGrid[i] = NaN // 三角形外的点设为NaN
+        continue
+      }
+      
       if (!neighborList || neighborList.length === 0) {
         resultGrid[i] = NaN
         continue
@@ -258,29 +264,119 @@ export class GridBuilder {
    * @returns {Object} 网格配置信息
    */
   static createGridInfo(channelPositions, options = {}) {
-    const { gridSize = 120, padding = 5 } = options
-    
+    const { 
+      gridSize = 120, 
+      padding = 5, 
+      fixedBounds = null, 
+      layoutDimensions = null,
+      useSixDockMode = false,
+      sixDockTriangleVertices = []
+    } = options
+
     // 计算边界
     const positions = channelPositions.map(ch => ch.position)
     const xCoords = positions.map(p => p[0])
     const yCoords = positions.map(p => p[1])
-    
-    const bounds = {
-      minX: Math.min(...xCoords) - padding,
-      maxX: Math.max(...xCoords) + padding,
-      minY: Math.min(...yCoords) - padding,
-      maxY: Math.max(...yCoords) + padding
+
+    let bounds
+    if (fixedBounds && typeof fixedBounds.minX === 'number') {
+      // 使用固定边界（例如完整Triangle布局: [0, W] x [0, H]）
+      bounds = { ...fixedBounds }
+    } else if (layoutDimensions && typeof layoutDimensions.x === 'number' && typeof layoutDimensions.y === 'number') {
+      // 使用布局尺寸作为边界
+      bounds = { minX: 0, maxX: layoutDimensions.x, minY: 0, maxY: layoutDimensions.y }
+    } else {
+      // 默认：根据通道点范围 + padding 计算
+      bounds = {
+        minX: Math.min(...xCoords) - padding,
+        maxX: Math.max(...xCoords) + padding,
+        minY: Math.min(...yCoords) - padding,
+        maxY: Math.max(...yCoords) + padding
+      }
     }
-    
+
     const width = bounds.maxX - bounds.minX
     const height = bounds.maxY - bounds.minY
-    
+
+    // 6dock三角形mask支持
+    let triangleMask = null
+    if (useSixDockMode && sixDockTriangleVertices && sixDockTriangleVertices.length === 3) {
+      console.log('[GridBuilder] 启用6dock三角形mask模式')
+      console.log('[GridBuilder] 三角形顶点:', sixDockTriangleVertices)
+      
+      // 创建三角形mask (网格中每个点是否在三角形内)
+      triangleMask = this._createTriangleMask(gridSize, bounds, sixDockTriangleVertices)
+      
+      console.log('[GridBuilder] 三角形mask生成完成，有效点数:', triangleMask.filter(Boolean).length)
+    }
+
     return {
       gridSize,
       bounds,
       width,
       height,
-      pixelSize: Math.max(width, height) / gridSize
+      pixelSize: Math.max(width, height) / gridSize,
+      // 6dock三角形支持
+      useSixDockMode,
+      triangleMask, // 如果启用6dock模式，这里包含每个网格点是否在三角形内的boolean数组
+      triangleVertices: sixDockTriangleVertices
     }
+  }
+
+  /**
+   * 创建三角形mask - 判断网格中哪些点在三角形内
+   * @param {number} gridSize - 网格大小
+   * @param {Object} bounds - 边界信息
+   * @param {Array} triangleVertices - 三角形顶点 [{x, y}, {x, y}, {x, y}]
+   * @returns {Array} Boolean数组，true表示在三角形内
+   * @private
+   */
+  static _createTriangleMask(gridSize, bounds, triangleVertices) {
+    const mask = new Array(gridSize * gridSize)
+    
+    // 提取三角形顶点
+    const [v1, v2, v3] = triangleVertices
+    
+    for (let y = 0; y < gridSize; y++) {
+      for (let x = 0; x < gridSize; x++) {
+        const gridIndex = y * gridSize + x
+        
+        // 将网格坐标转换为实际坐标 (Triangle坐标系)
+        const realX = bounds.minX + (x / (gridSize - 1)) * (bounds.maxX - bounds.minX)
+        const realY = bounds.minY + (y / (gridSize - 1)) * (bounds.maxY - bounds.minY)
+        
+        // 判断点是否在三角形内
+        mask[gridIndex] = this._isPointInTriangle(realX, realY, v1, v2, v3)
+      }
+    }
+    
+    return mask
+  }
+
+  /**
+   * 判断点是否在三角形内 (重心坐标法)
+   * @param {number} px - 点的x坐标
+   * @param {number} py - 点的y坐标
+   * @param {Object} v1 - 三角形顶点1 {x, y}
+   * @param {Object} v2 - 三角形顶点2 {x, y}
+   * @param {Object} v3 - 三角形顶点3 {x, y}
+   * @returns {boolean}
+   * @private
+   */
+  static _isPointInTriangle(px, py, v1, v2, v3) {
+    // 使用重心坐标法判断点是否在三角形内
+    const denom = (v2.y - v3.y) * (v1.x - v3.x) + (v3.x - v2.x) * (v1.y - v3.y)
+    
+    // 防止分母为0 (三角形退化)
+    if (Math.abs(denom) < 1e-10) {
+      return false
+    }
+    
+    const a = ((v2.y - v3.y) * (px - v3.x) + (v3.x - v2.x) * (py - v3.y)) / denom
+    const b = ((v3.y - v1.y) * (px - v3.x) + (v1.x - v3.x) * (py - v3.y)) / denom
+    const c = 1 - a - b
+    
+    // 点在三角形内当且仅当所有重心坐标都非负
+    return a >= 0 && b >= 0 && c >= 0
   }
 }

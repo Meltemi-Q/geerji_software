@@ -92,30 +92,53 @@ export class TriangleDataProcessor {
   calculateChannelPositions(sources, detectors) {
     const channelPositions = []
     let channelId = 0
+    
+    // 优先尝试加载通道映射（与实时432通道顺序一致）
+    // 若不存在映射，则回退到 sources×detectors 全组合
+    const mappingJson = window.__CHANNEL_MAP__
+    const useMapping = Array.isArray(mappingJson) && mappingJson.length > 0
 
-    sources.forEach((source, sourceIdx) => {
-      detectors.forEach((detector, detectorIdx) => {
-        // 计算通道中点位置（Triangle 2D坐标系，单位：mm）
-        const channelX = (source.x + detector.x) / 2
-        const channelY = (source.y + detector.y) / 2
-        
-        // 计算光源-检测器距离
-        const distance = Math.sqrt(
-          Math.pow(source.x - detector.x, 2) + 
-          Math.pow(source.y - detector.y, 2)
-        )
-
+    if (useMapping) {
+      mappingJson.forEach((m, idx) => {
+        const s = sources[m.source_index - 1]
+        const d = detectors[m.detector_index - 1]
+        if (!s || !d) return
+        const x = (s.x + d.x) / 2
+        const y = (s.y + d.y) / 2
+        const distance = Math.hypot(s.x - d.x, s.y - d.y)
         channelPositions.push({
-          channelId: channelId++,
-          position: [channelX, channelY], // Triangle 2D坐标 (mm)
-          sourceIndex: sourceIdx,
-          detectorIndex: detectorIdx,
-          source: source,
-          detector: detector,
-          distance: distance
+          channelId: idx,
+          position: [x, y],
+          sourceIndex: m.source_index - 1,
+          detectorIndex: m.detector_index - 1,
+          source: s,
+          detector: d,
+          distance,
+          wavelength: m.wavelength || 0
         })
       })
-    })
+    } else {
+      sources.forEach((source, sourceIdx) => {
+        detectors.forEach((detector, detectorIdx) => {
+          // 计算通道中点位置（Triangle 2D坐标系，单位：mm）
+          const channelX = (source.x + detector.x) / 2
+          const channelY = (source.y + detector.y) / 2
+          
+          // 计算光源-检测器距离
+          const distance = Math.hypot(source.x - detector.x, source.y - detector.y)
+          
+          channelPositions.push({
+            channelId: channelId++,
+            position: [channelX, channelY], // Triangle 2D坐标 (mm)
+            sourceIndex: sourceIdx,
+            detectorIndex: detectorIdx,
+            source: source,
+            detector: detector,
+            distance: distance
+          })
+        })
+      })
+    }
 
     console.log(`[TriangleDataProcessor] 通道位置计算完成: ${channelPositions.length}个通道`)
     console.log(`[TriangleDataProcessor] 验证: ${sources.length} × ${detectors.length} = ${sources.length * detectors.length}`)
@@ -178,14 +201,7 @@ export class TriangleDataProcessor {
     }
 
     const { sources, detectors, channelPositions } = this.channelData
-    const expectedChannels = sources.length * detectors.length
-
-    if (channelPositions.length !== expectedChannels) {
-      return { 
-        isValid: false, 
-        error: `Channel count mismatch: expected ${expectedChannels}, got ${channelPositions.length}` 
-      }
-    }
+    // 若使用了自定义映射，不强制验证 sources×detectors 数量
 
     // 检查是否接近标准配置 (18光源 × 24检测器 = 432通道)
     const isStandardConfig = sources.length === 18 && detectors.length === 24
