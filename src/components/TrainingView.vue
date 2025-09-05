@@ -571,7 +571,8 @@ export default {
       if (realTriangleLayoutData) return realTriangleLayoutData
       
       try {
-        const response = await fetch(new URL('../../layout.json', import.meta.url).href)
+        // 统一从 public 提供的布局文件加载
+        const response = await fetch('/renumbered_full_layout.json')
         const data = await response.json()
         
         realTriangleLayoutData = data

@@ -96,20 +96,37 @@ export default {
     const curveTimeRange = ref(10) // 默认显示10秒数据
     
     let curveChart = null
+    let resizeListenerAttached = false
     let updateTimer = null
     let lastUpdateTime = 0
     const UPDATE_THROTTLE = 125 // 匹配8Hz数据频率（125ms）
     const autoScrollEnabled = ref(true) // 启用自动滚动窗口
-    const TIME_WINDOW_MS = 10000 // 10秒窗口（毫秒）
+    const TIME_WINDOW_MS = 15000 // 默认用于空数据坐标轴范围（与120帧≈15秒匹配）
+    let axisBaseEndTime = 0 // 轴标签基准结束时间（用于窗口对齐）
+    let trainingStartTime = 0 // 训练开始时间（用于累计时间标签）
     
     // 创建曲线图
     function createCurveChart() {
-      if (!curveChartRef.value) return
-      
+      const container = curveChartRef.value
+      if (!container) return
+
+      // 如果已有实例或DOM残留，先清理，防止重复叠加
+      if (curveChart) {
+        try { curveChart.dispose() } catch (e) {}
+        curveChart = null
+      }
+      const existing = echarts.getInstanceByDom(container)
+      if (existing) {
+        try { existing.dispose() } catch (e) {}
+      }
+      while (container.firstChild) {
+        container.removeChild(container.firstChild)
+      }
+
       console.log('[数据曲线] 初始化ECharts曲线图')
       
       // 创建ECharts实例
-      curveChart = echarts.init(curveChartRef.value, null, {
+      curveChart = echarts.init(container, null, {
         renderer: 'canvas',
         useDirtyRect: true
       })
@@ -123,17 +140,11 @@ export default {
         },
         title: {
           text: '血氧数据变化情况',
-          subtext: '\nHbO 和 HbR',
           left: 'center',
           textStyle: {
             color: '#000',
             fontSize: 16,
             fontWeight: 'bold'
-          },
-          subtextStyle: {
-            color: '#000',
-            fontSize: 12,
-            fontWeight: 'normal'
           }
         },
         tooltip: {
@@ -154,7 +165,7 @@ export default {
           }
         },
         legend: {
-          data: ['HbO (含氧血红蛋白)', 'HbR (脱氧血红蛋白)'],
+          data: ['含氧血红蛋白', '脱氧血红蛋白'],
           top: 30,
           textStyle: {
             color: '#000'
@@ -162,23 +173,35 @@ export default {
         },
         grid: {
           left: '3%',
-          right: '4%',
-          bottom: '15%',
+          right: '6%',
+          bottom: '16%',
           top: '20%'
         },
+        // 固定刻度位置：将时间轴改为 value 轴（0..TIME_WINDOW_MS），标签显示相对时间
         xAxis: {
-          type: 'time',
+          type: 'value',
+          min: 0,
+          max: TIME_WINDOW_MS,
+          interval: 5000, // 固定5s间隔
           boundaryGap: false,
+          axisTick: { alignWithLabel: true },
+          splitNumber: 3,
           axisLine: {
-            lineStyle: {
-              color: '#000'
-            }
+            lineStyle: { color: '#000' }
           },
           axisLabel: {
             formatter: function(value) {
-              return new Date(value).toLocaleTimeString()
+              const totalSeconds = Math.floor(value / 1000)
+              const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+              const ss = String(totalSeconds % 60).padStart(2, '0')
+              return `${mm}:${ss}`
             },
-            color: '#000'
+            color: '#000',
+            rotate: -20,
+            showMaxLabel: true,
+            showMinLabel: true,
+            hideOverlap: true,
+            margin: 10
           }
         },
         yAxis: {
@@ -203,25 +226,10 @@ export default {
             }
           }
         },
-        dataZoom: [
-          {
-            type: 'inside',
-            start: 70,
-            end: 100,
-            filterMode: 'none'
-          },
-          {
-            type: 'slider',
-            start: 70,
-            end: 100,
-            filterMode: 'none',
-            height: 20,
-            bottom: 20
-          }
-        ],
+        // 移除内置dataZoom，避免鼠标交互影响自动滚动
         series: [
           {
-            name: 'HbO (含氧血红蛋白)',
+            name: '含氧血红蛋白',
             type: 'line',
             smooth: 0.1, // 降低平滑度，增强真实波动感
             symbol: 'none',
@@ -245,7 +253,7 @@ export default {
             data: []
           },
           {
-            name: 'HbR (脱氧血红蛋白)',
+            name: '脱氧血红蛋白',
             type: 'line',
             smooth: 0.1, // 降低平滑度，增强真实波动感
             symbol: 'none',
@@ -273,8 +281,13 @@ export default {
       
       curveChart.setOption(option)
       
-      // 窗口大小变化时重新调整
-      window.addEventListener('resize', handleResize)
+      // 不绑定dataZoom事件，避免悬停/点击影响自动滚动
+
+      // 窗口大小变化时重新调整（仅绑定一次）
+      if (!resizeListenerAttached) {
+        window.addEventListener('resize', handleResize)
+        resizeListenerAttached = true
+      }
       
       console.log('[数据曲线] ECharts曲线图初始化完成')
     }
@@ -297,13 +310,21 @@ export default {
       // 处理空数据情况：显示空图表但保持坐标轴可见
       if (!props.dataHistory.length) {
         console.log('[滚动曲线] 暂无数据，显示空图表')
-        const emptyTimeAxisMin = now - TIME_WINDOW_MS
-        const emptyTimeAxisMax = now
+        axisBaseEndTime = now
         
         curveChart.setOption({
           xAxis: {
-            min: emptyTimeAxisMin,
-            max: emptyTimeAxisMax
+            min: 0,
+            max: TIME_WINDOW_MS,
+            interval: 5000,
+            axisLabel: {
+              formatter: function(value) {
+                const totalSeconds = Math.floor(value / 1000)
+                const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+                const ss = String(totalSeconds % 60).padStart(2, '0')
+                return `${mm}:${ss}`
+              }
+            }
           },
           series: [
             { data: [] },  // 空的HbO数据
@@ -315,43 +336,70 @@ export default {
       
       // 【修复】使用参考项目的高效切片方法
       const dataLength = props.dataHistory.length
-      const dataAge = dataLength > 0 ? (now - props.dataHistory[0].recordTime) / 1000 : 0
       
       let displayData = []
       let timeAxisMin, timeAxisMax
       let startIdx, endIdx
       
-      // 计算显示范围索引
+      // 使用固定帧窗口（120帧）
+      const WINDOW_FRAMES = 120
       endIdx = dataLength
-      if (dataAge < 10) {
-        // 数据不满10秒：显示所有数据
+      if (dataLength <= WINDOW_FRAMES) {
         startIdx = 0
-        timeAxisMin = props.dataHistory[0]?.recordTime || (now - TIME_WINDOW_MS)
-        timeAxisMax = now
-        console.log(`[滚动曲线] 数据不满10秒(${dataAge.toFixed(1)}s)，显示全部${dataLength}帧`)
+        console.log(`[滚动曲线] 数据不足${WINDOW_FRAMES}帧，显示全部${dataLength}帧`)
       } else {
-        // 数据满10秒：使用slice切片最新10秒数据（参考项目方式）
-        const windowFrames = Math.ceil(10 * 8) // 10秒 * 8Hz ≈ 80帧
-        startIdx = Math.max(0, dataLength - windowFrames)
-        timeAxisMin = now - TIME_WINDOW_MS
-        timeAxisMax = now
-        console.log(`[滚动曲线] 数据满10秒，slice切片显示最新${windowFrames}帧 (第${startIdx}-${endIdx}帧)`)
+        startIdx = Math.max(0, dataLength - WINDOW_FRAMES)
+        console.log(`[滚动曲线] 显示最新${WINDOW_FRAMES}帧 (第${startIdx}-${endIdx}帧)`)
       }
       
       // 使用高效的slice方法获取显示数据
       displayData = props.dataHistory.slice(startIdx, endIdx)
       
-      // 转换为ECharts数据格式，使用SDK统计数据
-      const hboSeriesData = displayData.map(frame => [frame.recordTime, frame.hboMean || 0])
-      const hbrSeriesData = displayData.map(frame => [frame.recordTime, frame.hbrMean || 0])
+      // 以显示数据的首尾时间作为坐标轴范围（无数据时使用TIME_WINDOW_MS回退）
+      const firstTime = displayData[0]?.recordTime ?? (now - TIME_WINDOW_MS)
+      const lastTime = displayData[displayData.length - 1]?.recordTime ?? now
+      timeAxisMin = firstTime
+      timeAxisMax = lastTime
+      
+      // 初始化训练开始时间（用于累计时间标签）
+      if (!trainingStartTime && props.dataHistory.length > 0) {
+        trainingStartTime = props.dataHistory[0]?.recordTime || now
+      }
+
+      // 窗口对齐：数据不足窗口时从第一帧对齐到0，否则保持末尾对齐
+      const lastRecordTime = displayData[displayData.length - 1]?.recordTime || now
+      const firstRecordTime = displayData[0]?.recordTime || lastRecordTime
+      axisBaseEndTime = lastRecordTime
+      const windowStart = displayData.length < WINDOW_FRAMES 
+        ? firstRecordTime 
+        : (lastRecordTime - TIME_WINDOW_MS)
+      const elapsedStartSec = Math.max(0, Math.floor((windowStart - trainingStartTime) / 1000))
+      // 转换为相对时间（0..TIME_WINDOW_MS）
+      const hboSeriesData = displayData.map(frame => [
+        Math.max(0, frame.recordTime - windowStart),
+        frame.hboMean || 0
+      ])
+      const hbrSeriesData = displayData.map(frame => [
+        Math.max(0, frame.recordTime - windowStart),
+        frame.hbrMean || 0
+      ])
       
       console.log(`[滚动曲线] 更新图表: HbO=${hboSeriesData.length}点, HbR=${hbrSeriesData.length}点`)
       
-      // 更新图表（优化性能：不合并配置，直接替换数据）
+      // 更新图表（固定坐标间隔与位置，仅更新标签与数据）
       curveChart.setOption({
         xAxis: {
-          min: timeAxisMin,
-          max: timeAxisMax
+          min: 0,
+          max: TIME_WINDOW_MS,
+          interval: 5000,
+          axisLabel: {
+            formatter: function(value) {
+              const totalSeconds = elapsedStartSec + Math.floor(value / 1000)
+              const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+              const ss = String(totalSeconds % 60).padStart(2, '0')
+              return `${mm}:${ss}`
+            }
+          }
         },
         series: [
           { data: hboSeriesData },
@@ -386,21 +434,16 @@ export default {
       }
     }
     
-    // 开始更新循环（自动滚动10秒窗口）
+    // 开始更新循环（自动滚动10秒窗口）- 简化版
     function startUpdateLoop() {
-      updateTimer = setInterval(() => {
-        if (autoScrollEnabled.value) {
-          updateScrollingChart()
-        }
-      }, UPDATE_THROTTLE) // 匹配8Hz数据频率（125ms）
+      // 不使用定时器，完全依赖数据驱动更新
+      console.log('[曲线简化] 移除定时器，使用纯数据驱动更新')
     }
     
-    // 停止更新循环
+    // 停止更新循环 - 简化版
     function stopUpdateLoop() {
-      if (updateTimer) {
-        clearInterval(updateTimer)
-        updateTimer = null
-      }
+      // 无定时器需要清理
+      console.log('[曲线简化] 无定时器需要清理')
     }
     
     // 初始化曲线图
@@ -415,16 +458,11 @@ export default {
       }
     }
     
-    // 监听数据变化：到达新帧时即时刷新（与定时器并行，提升持续性）
-    watch(() => props.currentValues, () => {
-      if (autoScrollEnabled.value) {
-        updateScrollingChart()
-      }
-    }, { deep: true })
+    // （已精简）数据更新触发器统一在后文的“滚动更新”监听中处理
     
     // 组件挂载
     onMounted(async () => {
-      console.log('[数据曲线模式] 组件已挂载')
+      console.log('[数据曲线模式] 组件已挂载，使用简化更新逻辑')
       initCurveChart()
     })
     
@@ -433,15 +471,30 @@ export default {
       console.log('[数据曲线模式] 组件已卸载')
       stopUpdateLoop()
       
-      if (curveChart) {
+      if (resizeListenerAttached) {
         window.removeEventListener('resize', handleResize)
-        curveChart.dispose()
+        resizeListenerAttached = false
+      }
+
+      if (curveChart) {
+        try { curveChart.dispose() } catch (e) {}
         curveChart = null
+      }
+
+      const container = curveChartRef.value
+      if (container) {
+        while (container.firstChild) {
+          container.removeChild(container.firstChild)
+        }
       }
     })
     
     // 时间选择方法
     function updateTimeRangeStart(event) {
+      // 【修改】当用户操作此滑块时，禁用自动滚动
+      if (autoScrollEnabled.value) {
+        autoScrollEnabled.value = false;
+      }
       const newStart = parseInt(event.target.value)
       const newTimeRange = { ...props.selectedTimeRange, start: newStart }
       emit('update-time-range', newTimeRange)
@@ -450,6 +503,10 @@ export default {
     }
     
     function updateTimeRangeEnd(event) {
+      // 【修改】当用户操作此滑块时，禁用自动滚动
+      if (autoScrollEnabled.value) {
+        autoScrollEnabled.value = false;
+      }
       const newEnd = parseInt(event.target.value)
       const newTimeRange = { ...props.selectedTimeRange, end: newEnd }
       emit('update-time-range', newTimeRange)
@@ -458,11 +515,19 @@ export default {
     }
     
     function resetTimeRange() {
+      // 【修改】“重置”按钮现在用于恢复“自动滚动”模式
       const maxIndex = Math.max(0, props.dataHistory.length - 1)
       const newTimeRange = { start: 0, end: maxIndex }
       emit('update-time-range', newTimeRange)
       console.log('[时间选择] 重置时间范围')
-      updateHistoricalChart()
+      
+      if (!autoScrollEnabled.value) {
+        autoScrollEnabled.value = true
+        console.log('[数据曲线] 恢复自动滚动')
+      }
+      
+      // 立即调用滚动更新，确保视图立即切换到实时模式
+      updateScrollingChart()
     }
     
     // 使用历史数据更新图表（加入防抖处理）
@@ -477,15 +542,44 @@ export default {
       
       const { start, end } = props.selectedTimeRange
       const selectedData = props.dataHistory.slice(start, end + 1)
+      if (!trainingStartTime && selectedData.length > 0) {
+        trainingStartTime = selectedData[0]?.recordTime || now
+      }
+      const lastSelTime = selectedData[selectedData.length - 1]?.recordTime || now
+      const firstSelTime = selectedData[0]?.recordTime || lastSelTime
+      axisBaseEndTime = lastSelTime
+      const windowStart = selectedData.length < WINDOW_FRAMES 
+        ? firstSelTime 
+        : (lastSelTime - TIME_WINDOW_MS)
+      const elapsedStartSec = Math.max(0, Math.floor((windowStart - trainingStartTime) / 1000))
       
       // 使用SDK统计数据（避免重新计算导致的跳动）
-      const hboSeriesData = selectedData.map(frame => [frame.recordTime, frame.hboMean || 0])
-      const hbrSeriesData = selectedData.map(frame => [frame.recordTime, frame.hbrMean || 0])
+      const hboSeriesData = selectedData.map(frame => [
+        Math.max(0, frame.recordTime - windowStart),
+        frame.hboMean || 0
+      ])
+      const hbrSeriesData = selectedData.map(frame => [
+        Math.max(0, frame.recordTime - windowStart),
+        frame.hbrMean || 0
+      ])
       
       console.log(`[曲线优化] 更新${selectedData.length}帧数据，使用防抖机制`)
       
-      // 优化更新：使用notMerge=false避免重建整个图表
+      // 优化更新：固定坐标间隔与位置，仅更新标签与数据
       curveChart.setOption({
+        xAxis: {
+          min: 0,
+          max: TIME_WINDOW_MS,
+          interval: 5000,
+          axisLabel: {
+            formatter: function(value) {
+              const totalSeconds = elapsedStartSec + Math.floor(value / 1000)
+              const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
+              const ss = String(totalSeconds % 60).padStart(2, '0')
+              return `${mm}:${ss}`
+            }
+          }
+        },
         series: [
           { data: hboSeriesData },
           { data: hbrSeriesData }
@@ -499,17 +593,17 @@ export default {
         if (autoScrollEnabled.value) {
           updateScrollingChart()
         } else {
-          updateHistoricalChart() // 手动时间选择模式保留原逻辑
+          // 在手动模式下，当有新数据时，我们不再自动更新历史视图
+          // 这样可以防止用户正在查看的范围被意外改变
+          // updateHistoricalChart() // 注释掉此行
         }
       }
     }, { deep: true })
     
     // 监听时间范围变化
     watch(() => props.selectedTimeRange, () => {
-      if (autoScrollEnabled.value) {
-        // 自动滚动模式下忽略手动时间范围，保持10秒窗口
-        updateScrollingChart()
-      } else {
+      // 此监听器现在主要由手动滑块触发
+      if (!autoScrollEnabled.value) {
         updateHistoricalChart()
       }
     }, { deep: true })
@@ -533,70 +627,67 @@ export default {
 </script>
 
 <style scoped>
+/* 曲线模式视图样式 */
 .curve-mode-view {
   width: 100%;
   height: 100%;
+  min-height: 600px; /* 强制最小高度 */
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-/* 曲线图区域 */
 .curve-section {
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .curve-card {
-  width: 100%;
-  height: 100%;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
   padding: 20px;
+  margin: 10px;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
 }
 
 .curve-header {
-  margin-bottom: 20px;
-  padding-bottom: 15px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  margin-bottom: 15px;
+  flex-shrink: 0;
 }
 
 .curve-title {
-  font-size: 20px;
+  color: white;
+  font-size: 18px;
   font-weight: 600;
-  color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  margin: 0 0 15px 0;
   text-align: center;
-  margin: 0;
 }
 
 .curve-container {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  min-height: 300px;
+  position: relative;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
   padding: 10px;
 }
 
 .curve-canvas {
   width: 100%;
   height: 100%;
-  border-radius: 16px;
-  overflow: hidden; /* 裁剪内部画布实现圆角范围 */
-  background: rgba(0, 0, 0, 0.1);
-  min-height: 300px;
+  min-height: 280px;
 }
 
 /* 时间选择控件样式 */
 .time-selection-controls {
-  margin-top: 15px;
   padding: 10px;
   background: rgba(255, 255, 255, 0.05);
   border-radius: 8px;

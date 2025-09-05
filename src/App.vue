@@ -1,8 +1,13 @@
 <template>
   <div class="tablet-app">
+    <!-- HM测试页面 -->
+    <HeatmapTestView 
+      v-if="appState === 'hm-test'"
+    />
+    
     <!-- 训练界面 -->
     <TrainingContainer 
-      v-if="appState === 'training'"
+      v-else-if="appState === 'training'"
       :hbo-data="hboData"
       :hbr-data="hbrData"
       :current-values="currentValues"
@@ -43,21 +48,77 @@
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import TrainingContainer from './components/training/TrainingContainer.vue' // 新的模块化训练容器
 import AssessmentView from './components/AssessmentView.vue'
 import StandbyView from './components/StandbyView.vue'
+import HeatmapTestView from './components/HeatmapTestView.vue' // HM测试页面
+import { sessionManager } from './services/sessionManager.js'
 
 export default {
   name: 'App',
   components: {
     TrainingContainer,
     AssessmentView,
-    StandbyView
+    StandbyView,
+    HeatmapTestView
   },
   setup() {
-    // 应用状态：'standby', 'training', 'assessment'
+    // 应用状态：'standby', 'training', 'assessment', 'hm-test'
     const appState = ref('standby')
+    
+    // 检查URL路径和Hash，支持直接导航
+    const checkRoute = () => {
+      const path = window.location.pathname
+      const hash = window.location.hash
+      
+      console.log('[App] 路由检查:', { path, hash, currentAppState: appState.value })
+      
+      // 支持 /hm 路径或 #hm hash
+      if (path === '/hm' || hash === '#hm') {
+        console.log('[App] 切换到HM测试模式')
+        appState.value = 'hm-test'
+      }
+      // 支持 #training hash 直接进入训练模式
+      else if (hash === '#training') {
+        if (appState.value !== 'training') {
+          console.log('[App] 直接进入训练模式 (首次)')
+          appState.value = 'training'
+          // 触发训练初始化
+          nextTick(() => {
+            startTraining()
+          })
+        } else {
+          console.log('[App] 已在训练模式，跳过重复初始化')
+        }
+      }
+      // 支持 #assessment hash 直接进入评估模式
+      else if (hash === '#assessment') {
+        console.log('[App] 直接进入评估模式')
+        appState.value = 'assessment'
+      }
+    }
+    
+    // 监听URL变化
+    window.addEventListener('hashchange', checkRoute)
+    window.addEventListener('popstate', checkRoute)
+    
+    // 页面加载时立即检查路由状态
+    checkRoute()
+
+    // 加载通道映射（若存在），用于与432通道顺序对齐
+    const loadChannelMap = async () => {
+      try {
+        const res = await fetch('/config/channel_map.json')
+        if (res.ok) {
+          const map = await res.json()
+          window.__CHANNEL_MAP__ = Array.isArray(map) ? map : []
+          console.log('[App] 已加载通道映射: 条目数', window.__CHANNEL_MAP__.length)
+        }
+      } catch (e) {
+        // 忽略缺失
+      }
+    }
     
     // 患者信息
     const patientInfo = ref({
@@ -110,8 +171,8 @@ export default {
     
     // 历史数据存储（10秒滚动窗口）
     const dataHistory = ref([])
-    const TIME_WINDOW_SECONDS = 10
-    const TIME_WINDOW_MS = TIME_WINDOW_SECONDS * 1000
+    // 改为基于帧的滚动窗口（120帧）
+    const WINDOW_FRAMES = 120
     const selectedTimeRange = ref({ start: 0, end: 100 })
     
     // 脑活跃度评分
@@ -138,9 +199,10 @@ export default {
     // 定时器
     let timeUpdateTimer = null
     let dataUpdateTimer = null
+    let trainingStartMs = null
     
-    // fNIRS API配置
-    const FNIRS_API_BASE = 'http://localhost:8090'
+    // fNIRS API配置（从环境变量读取，默认8091）
+    const FNIRS_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8091'
     
     /**
      * 从Python SDK服务器获取真实fNIRS数据
@@ -173,17 +235,31 @@ export default {
           url: apiUrl
         })
         
-        // 如果API失败，回退到模拟数据
+        // 如果API失败，回退到模拟数据（增强容错机制）
         const fallbackData = {
           hboData: generateRealisticFNIRSData(0.025, 'hbo'),
           hbrData: generateRealisticFNIRSData(-0.015, 'hbr'),
-          hboStats: { mean: 0.025, std: 0.015, min: 0.01, max: 0.04 },
-          hbrStats: { mean: -0.015, std: 0.012, min: -0.03, max: 0.0 },
+          hboStats: { 
+            mean: 0.025, 
+            std: 0.015, 
+            min: 0.01, 
+            max: 0.04 
+          },
+          hbrStats: { 
+            mean: -0.015, 
+            std: 0.012, 
+            min: -0.03, 
+            max: 0.0 
+          },
           timestamp: Date.now() / 1000,
-          frameId: Math.floor(Date.now() / 1000) % 10000
+          frameId: Math.floor(Date.now() / 1000) % 10000,
+          fallbackMode: true // 标记为回退模式
         }
         
-        // 使用模拟数据
+        // 在控制台显示友好提示
+        if (error.message.includes('Failed to fetch')) {
+          console.log('💡 [用户提示] 后端服务可能未启动，请检查 fnirs_data_server.py')
+        }
         
         return fallbackData
       }
@@ -225,19 +301,10 @@ export default {
       console.log('[历史数据存储] 数据帧已存储，当前历史长度:', dataHistory.value.length)
       
       // 【修复】更新时间选择范围（支持数据累积的滚动显示）
-      const totalDataAge = dataHistory.value.length > 0 ? (now - dataHistory.value[0].recordTime) / 1000 : 0
       selectedTimeRange.value.end = dataHistory.value.length - 1
-      
-      if (totalDataAge < TIME_WINDOW_SECONDS) {
-        // 不满10秒：显示所有数据
-        selectedTimeRange.value.start = 0
-        console.log(`[滚动显示] 数据不满${TIME_WINDOW_SECONDS}秒(${totalDataAge.toFixed(1)}s)，显示所有${dataHistory.value.length}帧`)
-      } else {
-        // 满10秒：滚动显示最新10秒的数据帧
-        const recentFrames = Math.ceil(TIME_WINDOW_SECONDS * 8) // 8Hz * 10秒 ≈ 80帧
-        selectedTimeRange.value.start = Math.max(0, dataHistory.value.length - recentFrames)
-        console.log(`[滚动显示] 数据满${TIME_WINDOW_SECONDS}秒，滚动显示最新${recentFrames}帧 (第${selectedTimeRange.value.start}-${selectedTimeRange.value.end}帧)`)
-      }
+      const recentFrames = WINDOW_FRAMES
+      selectedTimeRange.value.start = Math.max(0, dataHistory.value.length - recentFrames)
+      console.log(`[滚动显示] 滚动显示最新${recentFrames}帧 (第${selectedTimeRange.value.start}-${selectedTimeRange.value.end}帧)`) 
     }
     
     /**
@@ -413,27 +480,43 @@ export default {
     async function startTraining() {
       console.log('[训练调试] 开始训练流程...')
       
-      // 确保康助侠设备已连接
+      // 1. 启动训练会话
+      console.log('[会话管理] 启动新的训练会话...')
+      const sessionResult = await sessionManager.startSession('brain')
+      if (!sessionResult.success) {
+        console.error('[会话管理] 会话启动失败:', sessionResult.error)
+        // 仍然继续训练，但没有云端同步
+      } else {
+        console.log('[会话管理] 会话启动成功:', sessionResult.session_id)
+      }
+      
+      // 2. 确保康助侠设备已连接
       if (!kangzhuxiaStatus.value.connected) {
         console.log('[训练调试] 连接康助侠设备...')
         await connectKangzhuxia()
       }
       
+      // 3. 设置应用训练状态
       appState.value = 'training'
       trainingStatus.value = {
         isTraining: true,
         duration: 0,
         speed: 'low',
-        sessionId: 'KZ_' + Date.now()
+        sessionId: sessionResult.session_id || 'KZ_' + Date.now()
       }
+      // 设置训练起始时间基准
+      trainingStartMs = Date.now()
+      // 开始训练时清空历史，触发曲线x轴累计时间从0开始
+      dataHistory.value = []
+      selectedTimeRange.value = { start: 0, end: 0 }
       
       console.log('[训练调试] 训练状态已设置:', trainingStatus.value)
       
-      // 立即开始数据模拟更新（不等待康助侠连接）
+      // 4. 立即开始数据模拟更新（不等待康助侠连接）
       console.log('[训练调试] 启动数据模拟...')
       startDataSimulation()
       
-      // 异步启动康助侠数据采集
+      // 5. 异步启动康助侠数据采集
       startKangzhuxiaCollection().catch(error => {
         console.error('[训练调试] 康助侠连接失败，但训练继续:', error)
       })
@@ -441,26 +524,56 @@ export default {
     
     // 暂停训练
     function pauseTraining() {
+      console.log('[训练调试] 暂停训练...')
       trainingStatus.value.isTraining = false
       stopDataSimulation()
+      
+      // 暂停会话（停止数据收集但保持会话活跃）
+      sessionManager.pauseSession()
     }
     
     // 停止训练
     async function stopTraining() {
+      console.log('[训练调试] 停止训练流程...')
+      
+      // 1. 更新应用状态
       appState.value = 'assessment'
       trainingStatus.value.isTraining = false
       
-      // 停止康助侠数据采集
+      // 2. 停止康助侠数据采集
       await stopKangzhuxiaCollection()
       
+      // 3. 停止数据模拟
       stopDataSimulation()
       
-      // 生成综合评估数据
+      // 4. 结束训练会话（自动上传会话数据）
+      console.log('[会话管理] 结束训练会话...')
+      const sessionEndResult = await sessionManager.endSession({
+        training_mode: 'completed',
+        duration: trainingStatus.value.duration,
+        stop_reason: 'normal_completion'
+      })
+      
+      if (!sessionEndResult.success) {
+        console.error('[会话管理] 会话结束失败:', sessionEndResult.error)
+      } else {
+        console.log('[会话管理] 会话成功结束并上传')
+      }
+      
+      // 5. 重置计时基准
+      trainingStartMs = null
+      // 清空历史数据与时间范围，确保下次进入曲线x轴从0开始
+      dataHistory.value = []
+      selectedTimeRange.value = { start: 0, end: 0 }
+      
+      // 6. 生成综合评估数据
       await generateAssessmentData()
     }
     
     // 紧急停止
     async function emergencyStop() {
+      console.log('[训练调试] 紧急停止训练...')
+      
       appState.value = 'standby'
       trainingStatus.value = {
         isTraining: false,
@@ -469,12 +582,30 @@ export default {
         sessionId: null
       }
       
+      // 紧急结束训练会话（标记为紧急停止）
+      console.log('[会话管理] 紧急结束训练会话...')
+      const sessionEndResult = await sessionManager.endSession({
+        training_mode: 'emergency_stopped',
+        duration: trainingStatus.value.duration,
+        stop_reason: 'emergency_stop'
+      })
+      
+      if (!sessionEndResult.success) {
+        console.error('[会话管理] 紧急停止会话结束失败:', sessionEndResult.error)
+      } else {
+        console.log('[会话管理] 紧急停止会话成功结束')
+      }
+      
       // 紧急停止康助侠设备
       if (kangzhuxiaStatus.value.connected) {
         await stopKangzhuxiaCollection()
       }
       
       stopDataSimulation()
+      trainingStartMs = null
+      // 清空历史数据与时间范围
+      dataHistory.value = []
+      selectedTimeRange.value = { start: 0, end: 0 }
     }
     
     // 保存记录
@@ -492,6 +623,10 @@ export default {
         speed: 'low',
         sessionId: null
       }
+      trainingStartMs = null
+      // 清空历史数据与时间范围
+      dataHistory.value = []
+      selectedTimeRange.value = { start: 0, end: 0 }
     }
 
     // 返回待机界面
@@ -511,6 +646,10 @@ export default {
         hboTrend: 'up',
         hbrTrend: 'down'
       }
+      trainingStartMs = null
+      // 清空历史数据与时间范围
+      dataHistory.value = []
+      selectedTimeRange.value = { start: 0, end: 0 }
     }
     
     // 开始数据模拟
@@ -521,8 +660,11 @@ export default {
         console.log('[数据流调试] 定时器触发，训练状态:', trainingStatus.value.isTraining)
         
         if (trainingStatus.value.isTraining) {
-          // 更新训练时长
-          trainingStatus.value.duration++
+          // 用真实时间计算训练时长（秒）
+          if (trainingStartMs === null) {
+            trainingStartMs = Date.now()
+          }
+          trainingStatus.value.duration = Math.max(0, Math.floor((Date.now() - trainingStartMs) / 1000))
           console.log('[数据流调试] 训练时长更新:', trainingStatus.value.duration)
           
           // 从Python SDK服务器获取真实fNIRS数据
@@ -564,7 +706,9 @@ export default {
               hbo: currentValues.value.hbo.toFixed(6),
               hbr: currentValues.value.hbr.toFixed(6),
               hboTrend: currentValues.value.hboTrend,
-              hbrTrend: currentValues.value.hbrTrend
+              hbrTrend: currentValues.value.hbrTrend,
+              dataHistoryLength: dataHistory.value.length,
+              fallbackMode: fnirData.fallbackMode || false
             })
             
             // 输出真实SDK数据范围用于调试
@@ -623,7 +767,22 @@ export default {
     }
     
     // 生命周期
-    onMounted(() => {
+    onMounted(async () => {
+      loadChannelMap()
+      
+      // 尝试恢复中断的训练会话
+      console.log('[会话管理] 检查是否需要恢复会话...')
+      const restoreResult = await sessionManager.restoreSession()
+      if (restoreResult.success) {
+        console.log('[会话管理] 成功恢复会话:', restoreResult.session_data.session_id)
+        // 可以选择是否自动进入训练模式，这里保守做法只显示日志
+      } else {
+        console.log('[会话管理] 没有需要恢复的会话:', restoreResult.error)
+      }
+      
+      // 检查初始路由
+      checkRoute()
+      
       // 更新时间显示
       timeUpdateTimer = setInterval(() => {
         currentTime.value = new Date().toLocaleTimeString()
@@ -634,6 +793,10 @@ export default {
       if (timeUpdateTimer) {
         clearInterval(timeUpdateTimer)
       }
+      
+      // 清理路由监听器
+      window.removeEventListener('hashchange', checkRoute)
+      window.removeEventListener('popstate', checkRoute)
       stopDataSimulation()
     })
     

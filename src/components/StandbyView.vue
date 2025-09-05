@@ -227,11 +227,21 @@ export default {
     onMounted(() => {
       timeInterval = setInterval(updateTime, 1000)
       
-      // 恢复患者信息状态
-      const savedPatientInfo = localStorage.getItem('patientInfo')
-      if (savedPatientInfo) {
+      // 【测试模式】直接跳过1-2步骤，快速进入训练
+      const isTestMode = true // 设为true跳过步骤，false恢复正常流程
+      
+      if (isTestMode) {
+        console.log('[测试模式] 直接跳过1-2步骤')
         stepCompleted.value.patientInfo = true
-        currentStep.value = 2
+        stepCompleted.value.deviceCheck = true
+        currentStep.value = 3
+      } else {
+        // 恢复患者信息状态
+        const savedPatientInfo = localStorage.getItem('patientInfo')
+        if (savedPatientInfo) {
+          stepCompleted.value.patientInfo = true
+          currentStep.value = 2
+        }
       }
     })
 

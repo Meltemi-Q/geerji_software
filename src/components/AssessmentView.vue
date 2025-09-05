@@ -130,7 +130,8 @@
         
         <button 
           class="action-btn secondary-btn"
-          @click="$emit('save-record')"
+          @click="handleSaveRecord"
+          :disabled="uploadStatus.isUploading"
         >
           <svg width="20" height="20" class="btn-icon">
             <path d="M19 21H5c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h11l5 5v11c0 1.1-.9 2-2 2z" 
@@ -138,8 +139,26 @@
             <polyline points="17,21 17,13 7,13 7,21" fill="none" stroke="currentColor" stroke-width="2"/>
             <polyline points="7,3 7,8 15,8" fill="none" stroke="currentColor" stroke-width="2"/>
           </svg>
-          保存记录
+          {{ uploadStatus.isUploading ? uploadStatus.progress : '保存记录' }}
         </button>
+        
+        <!-- 上传状态提示 -->
+        <div v-if="uploadStatus.success" class="upload-status success">
+          <svg width="16" height="16" class="status-icon">
+            <path d="M8 2L2 7v10c0 5.55 3.84 10 9 11 5.16-1 9-5.45 9-11V7l-10-5z" 
+                  fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M9 12l2 2 4-4" fill="none" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          评估记录已成功保存到云端
+        </div>
+        
+        <div v-if="uploadStatus.error" class="upload-status error">
+          <svg width="16" height="16" class="status-icon">
+            <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 4v4M8 12h.01" stroke="currentColor" stroke-width="2" fill="none"/>
+          </svg>
+          保存失败：{{ uploadStatus.error }}
+        </div>
 
         <button 
           class="action-btn tertiary-btn"
@@ -174,6 +193,9 @@ import {
   createTriangleFnirsInfo,
   createChannelMapping 
 } from '../utils/fnirsLayout.js'
+import { captureAssessment } from '../utils/screenshotCapture.js'
+import { sessionManager } from '../services/sessionManager.js'
+import { cloudAPI } from '../services/geerjiCloudAPI.js'
 
 // 加载配置（默认值，支持配置化）
 const defaultConfig = {
@@ -232,9 +254,17 @@ export default {
       required: true
     }
   },
-  setup(props) {
+  setup(props, { emit }) {
     const timeCurveRef = ref(null)
     const brainHeatmapRef = ref(null)
+    
+    // 上传状态管理
+    const uploadStatus = ref({
+      isUploading: false,
+      progress: '',
+      success: false,
+      error: null
+    })
     
     let timeCurveChart = null
     let brainHeatmapChart = null
@@ -622,6 +652,98 @@ export default {
       return value >= 0 ? `+${value.toFixed(3)}` : value.toFixed(3)
     }
     
+    // 保存评估记录（截图 + 云端上传）
+    async function handleSaveRecord() {
+      try {
+        console.log('[评估界面] 开始保存评估记录')
+        uploadStatus.value = {
+          isUploading: true,
+          progress: '正在截图保存...',
+          success: false,
+          error: null
+        }
+        
+        // 1. 捕获评估界面截图
+        const screenshotResult = await captureAssessment({
+          filename: `assessment_${Date.now()}.png`,
+          quality: 0.95
+        })
+        
+        if (!screenshotResult.success) {
+          throw new Error(`截图失败: ${screenshotResult.error}`)
+        }
+        
+        console.log('[评估界面] 截图捕获成功')
+        uploadStatus.value.progress = '正在上传截图...'
+        
+        // 2. 上传截图到云端
+        const uploadResult = await cloudAPI.uploadScreenshot(screenshotResult.dataUrl, {
+          type: 'assessment',
+          session_id: sessionManager.currentSession?.session_id,
+          dimensions: {
+            width: screenshotResult.width,
+            height: screenshotResult.height
+          }
+        })
+        
+        if (!uploadResult.success) {
+          console.warn('[评估界面] 截图上传失败，继续完成会话')
+        }
+        
+        uploadStatus.value.progress = '正在保存训练数据...'
+        
+        // 3. 完成训练会话并上传完整数据
+        const sessionData = {
+          assessment_summary: {
+            activity_level: activityLevelText.value,
+            activity_score: (Math.abs(props.trainingSummary.avgHboChange) + Math.abs(props.trainingSummary.avgHbrChange)) / 2,
+            hbo_avg_change: props.trainingSummary.avgHboChange,
+            hbr_avg_change: props.trainingSummary.avgHbrChange,
+            brain_activity_score: props.brainActivityScore,
+            assessment_text: props.assessmentText
+          },
+          screenshot_uploaded: uploadResult.success,
+          combined_heatmap_data: props.combinedHeatmap
+        }
+        
+        const sessionResult = await sessionManager.endSession(sessionData)
+        
+        if (sessionResult.success) {
+          console.log('[评估界面] 完整评估数据保存成功')
+          uploadStatus.value = {
+            isUploading: false,
+            progress: '保存完成！',
+            success: true,
+            error: null
+          }
+          
+          // 延迟2秒后清理状态，让用户看到成功信息
+          setTimeout(() => {
+            uploadStatus.value = {
+              isUploading: false,
+              progress: '',
+              success: false,
+              error: null
+            }
+          }, 2000)
+        } else {
+          throw new Error(sessionResult.error || '会话数据保存失败')
+        }
+        
+        // 触发原有的save-record事件
+        emit('save-record')
+        
+      } catch (error) {
+        console.error('[评估界面] 保存评估记录失败:', error)
+        uploadStatus.value = {
+          isUploading: false,
+          progress: '',
+          success: false,
+          error: error.message
+        }
+      }
+    }
+    
     // 初始化图表
     function initCharts() {
       nextTick(async () => {
@@ -668,7 +790,9 @@ export default {
       formatValue,
       activityLevelClass,
       activityLevelText,
-      activityLevelDescription
+      activityLevelDescription,
+      uploadStatus,
+      handleSaveRecord
     }
   }
 }
@@ -1097,6 +1221,57 @@ export default {
 
 .tertiary-btn:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.action-btn:disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 上传状态指示器 */
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  margin-top: 10px;
+  position: absolute;
+  top: -50px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.upload-status.success {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.9), rgba(5, 150, 105, 0.9));
+  color: #ffffff;
+  border-color: rgba(16, 185, 129, 0.4);
+}
+
+.upload-status.error {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.9), rgba(220, 38, 38, 0.9));
+  color: #ffffff;
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.status-icon {
+  flex-shrink: 0;
+}
+
+/* 确保底部按钮区域有正确的相对定位 */
+.bottom-actions {
+  position: relative;
 }
 
 /* 响应式设计 */

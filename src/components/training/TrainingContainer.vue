@@ -1,5 +1,5 @@
 <template>
-  <div class="obelab-style-training-view">
+  <div class="training-container-view">
     <!-- 顶部标题栏 -->
     <div class="top-header">
       <div class="system-branding">
@@ -22,7 +22,7 @@
       />
 
       <!-- 中间显示区域 - 根据模式切换组件 -->
-      <div class="center-display">
+      <div class="center-display" :class="{ 'curve-mode': displayMode === 'curve' }">
         <BrainModeView 
           v-if="displayMode === 'brain'"
           :hbo-data="hboData"
@@ -44,6 +44,7 @@
           :current-values="currentValues"
           :data-history="dataHistory"
           :selected-time-range="selectedTimeRange"
+          class="curve-display"
         />
         
         <GameModeView 
@@ -184,8 +185,8 @@ export default {
 </script>
 
 <style scoped>
-/* Obelab风格界面 - 专业大脑热力图系统 */
-.obelab-style-training-view {
+/* TrainingContainer - 专业大脑热力图系统 */
+.training-container-view {
   width: 100%;
   height: 100vh;
   background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); /* 专业蓝色渐变背景 */
@@ -270,6 +271,13 @@ export default {
   justify-content: center;
   min-height: 0;
   padding: 20px;
+}
+
+/* 曲线模式专用布局 */
+.center-display.curve-mode {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
 }
 
 /* ≤1365px断点：响应式布局 */

@@ -13,13 +13,33 @@ export class HeatmapCoordinator {
       opacity: 0.7,                      // 用户提供的透明度
       rotation: 0,
       anchor: "center",                  // 锚点设置
-      version: "1.0",
+      version: "1.1",                    // 版本更新支持6dock
       deviceProfile: "triangle"
     }
     
-    this.layoutBounds = { x: 188.72, y: 110.29 } // Triangle默认尺寸(mm)
+    // 默认完整Triangle尺寸(mm) - 兼容性保持
+    this.layoutBounds = { x: 188.72, y: 110.29 }
+    
+    // 6dock三角形边界配置 (基于triangle/layout.json真实数据分析 - 2025-09-04)
+    this.sixDockBounds = {
+      // 实际6dock覆盖的三角形区域 (基于真实dock中心点计算)
+      x: 77.00,  // 70.00 * 1.1 (扩大10%确保包含所有点)
+      y: 66.66,  // 60.60 * 1.1
+      // 6dock三角形在完整Triangle坐标系中的中心偏移
+      centerOffset: { x: 94.36, y: 46.01 },
+      // 三角形顶点坐标 (基于真实dock中心点的凸包计算)
+      vertices: [
+        { x: 59.36, y: 25.81 },  // 左下 (dock_10中心)
+        { x: 129.36, y: 25.81 }, // 右下 (dock_12中心)
+        { x: 94.36, y: 86.41 }   // 顶部 (dock_3中心)
+      ],
+      // 相对于完整Triangle的缩放比例
+      scaleRatio: { x: 0.371, y: 0.549 }
+    }
+    
     this.currentPixelBounds = null
     this.listeners = []
+    this.useSixDockMode = false  // 6dock模式开关
   }
 
   /**
@@ -28,6 +48,32 @@ export class HeatmapCoordinator {
   setLayoutBounds(bounds) {
     this.layoutBounds = bounds
     console.log('[HeatmapCoordinator] 布局边界已更新:', bounds)
+  }
+
+  /**
+   * 启用6dock模式
+   */
+  enableSixDockMode() {
+    this.useSixDockMode = true
+    console.log('[HeatmapCoordinator] 6dock模式已启用')
+    console.log('[HeatmapCoordinator] 6dock边界:', this.sixDockBounds)
+    this.notifyListeners()
+  }
+
+  /**
+   * 禁用6dock模式 (回到完整Triangle)
+   */
+  disableSixDockMode() {
+    this.useSixDockMode = false
+    console.log('[HeatmapCoordinator] 6dock模式已禁用，回到完整Triangle模式')
+    this.notifyListeners()
+  }
+
+  /**
+   * 获取当前使用的布局边界
+   */
+  getCurrentLayoutBounds() {
+    return this.useSixDockMode ? this.sixDockBounds : this.layoutBounds
   }
 
   /**
@@ -65,21 +111,44 @@ export class HeatmapCoordinator {
     })
     console.log('[HeatmapCoordinator] 当前配置:', this.config)
 
-    // 计算热力图实际尺寸
-    const heatmapWidth = brainRect.width * this.config.scale.width
-    const heatmapHeight = brainRect.height * this.config.scale.height
+    // 获取当前使用的布局边界
+    const currentBounds = this.getCurrentLayoutBounds()
+    
+    // 计算热力图实际尺寸（保持与当前布局一致的宽高比）
+    let desiredWidth = brainRect.width * this.config.scale.width
+    let desiredHeight = brainRect.height * this.config.scale.height
+    let targetRatio = currentBounds.x / currentBounds.y // 宽高比（mm）
+    
+    // 6dock模式需要调整缩放比例
+    if (this.useSixDockMode) {
+      desiredWidth *= currentBounds.scaleRatio.x  // 应用6dock缩放
+      desiredHeight *= currentBounds.scaleRatio.y
+      console.log('[HeatmapCoordinator] 6dock模式缩放应用:', {
+        originalScale: this.config.scale,
+        sixDockScale: currentBounds.scaleRatio,
+        finalDesired: { width: desiredWidth, height: desiredHeight }
+      })
+    }
 
-    // 完全复制demo的位置计算算法
-    const left = (brainRect.left - containerRect.left) + 
-                 (brainRect.width * this.config.position.x) - 
+    // 先按宽度计算高度，若超出期望高度则按高度回算宽度
+    let heatmapWidth = desiredWidth
+    let heatmapHeight = heatmapWidth / targetRatio
+    if (heatmapHeight > desiredHeight) {
+      heatmapHeight = desiredHeight
+      heatmapWidth = heatmapHeight * targetRatio
+    }
+
+    // 完全复制demo的位置计算算法（以中心点为锚）
+    const left = (brainRect.left - containerRect.left) +
+                 (brainRect.width * this.config.position.x) -
                  (heatmapWidth / 2)
-    const top = (brainRect.top - containerRect.top) + 
-                (brainRect.height * this.config.position.y) - 
+    const top = (brainRect.top - containerRect.top) +
+                (brainRect.height * this.config.position.y) -
                 (heatmapHeight / 2)
 
     this.currentPixelBounds = {
       left: Math.round(left),
-      top: Math.round(top), 
+      top: Math.round(top),
       width: Math.round(heatmapWidth),
       height: Math.round(heatmapHeight)
     }

@@ -37,7 +37,8 @@ export async function loadTriangleLayoutData() {
   if (realTriangleLayoutData) return realTriangleLayoutData
   
   try {
-    const response = await fetch('/layout.json')
+    // 统一从 public/config 加载 Triangle 布局
+    const response = await fetch('/config/triangle_layout.json')
     const data = await response.json()
     
     realTriangleLayoutData = data

@@ -106,6 +106,31 @@
 - 错误日志最小化噪声；关键路径加边界检查。
 
 ### 八、目录与交付物
+
+### 九之二、图层结构与坐标系统（统一规范）
+
+- 图层结构（自下而上）：
+  - 底层：大脑图片（background image）。
+  - 中间层：12-node 覆盖区域（来自 `fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json` 计算外轮廓，缺数据或 dock=0 时用当前色条中心色填充，描边为中心色浅亮变体）。
+  - 顶层：热力图/通道点（基于实时 SDK 数据插值渲染，或显示通道散点）。
+
+- 坐标源与一致性：
+  - 热力图坐标使用 `fnirs_sdk/config/device_profiles/triangle/layout.json` 的 Triangle 2D(mm) 作为统一基准，用于确定渲染网格与布局边界。
+  - 12-node 覆盖层坐标来源 `renumbered_full_layout.json`，提取全部 optode 的 `coordinates_2d`（mm）计算外轮廓（优先凹壳，兜底凸包，并外扩约 3mm），该多边形与热力图共享同一 mm→像素 映射（等比缩放 + 居中偏移 + Y 轴翻转），确保三层严格对齐。
+
+- 坐标系定义（Triangle 2D）：
+  - 原点在左下角（x_min, y_min）。
+  - x 轴向右增大，y 轴向上增大（mm）。
+  - 映射到像素时，先以 layout 宽高计算 scale = min(W/Lx, H/Ly)，再计算 offsetX/Y，使内容在容器内等比居中；像素坐标中 y 需翻转（上为大）以契合屏幕坐标。
+
+- ECharts 配置（隐藏坐标轴）：
+  - 主图采用类目轴并隐藏：xAxis/yAxis `type: category`，`data: [0..gridSize-1]`，`show: false`，`yAxis.inverse: true`。
+  - 热力图数据使用三元组 `[xIndex, yIndex, value]`，只更新 series；坐标轴不随帧变化。
+  - 覆盖层通过网格索引坐标绘制（custom polygon），或在数据生成时对覆盖层外网格置 NaN 进行预裁切。
+
+- 无数据时的呈现：
+  - 若 channel 数为 0 或未达最小阈值，只显示中间层覆盖区域（填充为色条中心色），颜色条仍展示固定刻度。
+
 - 新增文件：
   - `src/components/training/modes/heatmap/HeatmapReportStyleView.vue`
   - `src/utils/heatmap/interpolation/idw.js`

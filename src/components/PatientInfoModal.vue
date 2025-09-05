@@ -290,6 +290,34 @@
               <span class="condition-desc">健康状态</span>
             </button>
           </div>
+
+          <!-- 上传状态提示 -->
+          <div v-if="uploadStatus.uploading || uploadStatus.success || uploadStatus.error" class="upload-status-container">
+            <div v-if="uploadStatus.uploading" class="status-message status-loading">
+              <div class="status-icon">⏳</div>
+              <div class="status-text">
+                <div class="status-title">正在上传患者信息...</div>
+                <div class="status-desc">请稍候，正在同步到戈尔基云端服务器</div>
+              </div>
+            </div>
+
+            <div v-if="uploadStatus.success" class="status-message status-success">
+              <div class="status-icon">✅</div>
+              <div class="status-text">
+                <div class="status-title">上传成功！</div>
+                <div class="status-desc">患者信息已安全保存到云端，即将自动关闭</div>
+              </div>
+            </div>
+
+            <div v-if="uploadStatus.error" class="status-message status-error">
+              <div class="status-icon">⚠️</div>
+              <div class="status-text">
+                <div class="status-title">上传失败</div>
+                <div class="status-desc">{{ uploadStatus.error }}</div>
+                <div class="status-note">数据已本地保存，可以继续训练</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -315,8 +343,20 @@
           v-if="currentStep === 3"
           class="btn btn-success"
           @click="submitForm"
+          :disabled="uploadStatus.uploading"
+          :class="{
+            'btn-loading': uploadStatus.uploading,
+            'btn-success': uploadStatus.success,
+            'btn-error': uploadStatus.error && !uploadStatus.uploading
+          }"
         >
-          完成
+          <span v-if="uploadStatus.uploading" class="loading-icon">⏳</span>
+          <span v-else-if="uploadStatus.success" class="success-icon">✅</span>
+          <span v-else-if="uploadStatus.error" class="error-icon">⚠️</span>
+          <span v-if="uploadStatus.uploading">上传中...</span>
+          <span v-else-if="uploadStatus.success">上传成功</span>
+          <span v-else-if="uploadStatus.error">上传失败，点击重试</span>
+          <span v-else>完成</span>
         </button>
       </div>
     </div>
@@ -325,6 +365,7 @@
 
 <script>
 import { ref, computed, nextTick } from 'vue'
+import { cloudAPI } from '@/services/geerjiCloudAPI.js'
 
 export default {
   name: 'PatientInfoModal',
@@ -361,6 +402,13 @@ export default {
       name: '',
       age: '',
       phone: ''
+    })
+
+    // 上传状态管理
+    const uploadStatus = ref({
+      uploading: false,
+      success: false,
+      error: null
     })
     
     // 从localStorage恢复数据
@@ -540,7 +588,14 @@ export default {
     }
     
     // 提交表单
-    function submitForm() {
+    async function submitForm() {
+      // 重置上传状态
+      uploadStatus.value = {
+        uploading: true,
+        success: false,
+        error: null
+      }
+
       const data = {
         ...formData.value,
         bmi: parseFloat(bmi.value),
@@ -548,11 +603,82 @@ export default {
         timestamp: new Date().toISOString()
       }
       
-      // 保存到localStorage
-      localStorage.setItem('patientInfo', JSON.stringify(data))
-      
-      // 触发保存事件
-      emit('save', data)
+      try {
+        // 1. 本地保存（立即保存，确保数据不丢失）
+        localStorage.setItem('patientInfo', JSON.stringify(data))
+        console.log('[患者信息] 本地保存成功')
+
+        // 2. 云端上传患者档案
+        console.log('[患者信息] 开始上传到戈尔基云端')
+        const uploadResult = await cloudAPI.uploadPatientProfile(data)
+
+        if (uploadResult.success) {
+          console.log('[患者信息] 云端上传成功:', uploadResult.patient_id)
+          
+          uploadStatus.value = {
+            uploading: false,
+            success: true,
+            error: null
+          }
+
+          // 保存患者ID用于后续会话
+          const enhancedData = {
+            ...data,
+            patient_id: uploadResult.patient_id,
+            cloud_sync: true,
+            sync_timestamp: new Date().toISOString()
+          }
+
+          // 更新本地存储包含患者ID
+          localStorage.setItem('patientInfo', JSON.stringify(enhancedData))
+          localStorage.setItem('current_patient_id', uploadResult.patient_id)
+
+          // 触发保存事件
+          emit('save', enhancedData)
+
+          // 1.5秒后自动关闭（显示成功状态）
+          setTimeout(() => {
+            emit('close')
+          }, 1500)
+        } else {
+          throw new Error(uploadResult.error || '上传失败')
+        }
+      } catch (error) {
+        console.error('[患者信息] 云端上传失败:', error)
+        
+        uploadStatus.value = {
+          uploading: false,
+          success: false,
+          error: error.message
+        }
+
+        // 即使云端上传失败，也继续本地流程
+        // 生成本地患者ID用于会话管理
+        const localPatientId = data.patient_id || `PATIENT_${Date.now()}`
+        
+        // 标记为离线数据，待下次训练时重试
+        const offlineData = {
+          ...data,
+          patient_id: localPatientId,
+          cloud_sync: false,
+          offline_reason: error.message,
+          needs_sync: true
+        }
+
+        localStorage.setItem('patientInfo', JSON.stringify(offlineData))
+        localStorage.setItem('current_patient_id', localPatientId)
+        console.warn('[患者信息] 已保存为离线数据，将在下次训练时重试上传')
+
+        // 触发保存事件（本地数据）
+        emit('save', offlineData)
+
+        // 3秒后允许手动关闭
+        setTimeout(() => {
+          if (!uploadStatus.value.success) {
+            uploadStatus.value.error += '\n\n点击"完成"继续训练（数据已本地保存）'
+          }
+        }, 3000)
+      }
     }
     
     return {
@@ -569,6 +695,7 @@ export default {
       bmiPosition,
       noConditions,
       canProceed,
+      uploadStatus,
       validateName,
       validateAge,
       validatePhone,

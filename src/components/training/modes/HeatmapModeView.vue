@@ -81,7 +81,8 @@ export default {
       if (realTriangleLayoutData) return realTriangleLayoutData
       
       try {
-        const response = await fetch(new URL('../../../../layout.json', import.meta.url).href)
+        // 统一从 public/config 加载 Triangle 布局
+        const response = await fetch('/config/triangle_layout.json')
         const data = await response.json()
         
         realTriangleLayoutData = data

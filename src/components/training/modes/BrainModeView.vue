@@ -105,6 +105,7 @@ import { HeatmapCoordinator } from './heatmap/HeatmapCoordinator.js'
 import fullLayout from '../../../../fnirs_sdk/config/device_profiles/triangle/renumbered_full_layout.json'
 import HeatmapReportStyleView from './heatmap/HeatmapReportStyleView.vue'
 import { GeometryUtils } from '../../../utils/GeometryUtils.js'
+import { sessionManager } from '../../../services/sessionManager.js'
 
 export default {
   name: 'BrainModeView',
@@ -937,21 +938,88 @@ export default {
     }, { deep: true })
     
     // 监听HbO数据变化
-    watch(() => props.hboData, () => {
+    watch(() => props.hboData, (newHboData) => {
       console.log('[BrainModeView] HbO数据更新，触发热力图重绘')
+      
+      // 收集血氧数据到会话管理器
+      if (newHboData && Array.isArray(newHboData) && newHboData.length > 0) {
+        try {
+          // 计算平均值或使用第一个有效值
+          const validValues = newHboData.filter(val => !isNaN(val) && isFinite(val))
+          if (validValues.length > 0) {
+            // 可以传递单个平均值或整个数组
+            const avgHbo = validValues.reduce((sum, val) => sum + val, 0) / validValues.length
+            
+            // 添加数据点到会话管理器
+            sessionManager.addHBODataPoint(avgHbo, {
+              timestamp: Date.now(),
+              channel_count: newHboData.length,
+              valid_ratio: validValues.length / newHboData.length,
+              quality: validValues.length / newHboData.length // 简单的质量评分
+            })
+            
+            console.log(`[BrainModeView] 已收集血氧数据: 平均值=${avgHbo.toFixed(3)}, 有效通道=${validValues.length}/${newHboData.length}`)
+          }
+        } catch (error) {
+          console.error('[BrainModeView] 血氧数据收集失败:', error)
+        }
+      }
+      
       updateHeatmapRender()
     }, { deep: true })
     
     // 组件挂载
     onMounted(async () => {
       console.log('[BrainModeView] 组件已挂载，开始初始化...')
+      
+      // 启动训练会话
+      try {
+        const sessionResult = await sessionManager.startSession('brain', {
+          mode_details: {
+            heatmap_enabled: true,
+            triangle_layout: true,
+            auto_screenshot: true
+          }
+        })
+        
+        if (sessionResult.success) {
+          console.log(`[BrainModeView] 训练会话已启动: ${sessionResult.session_id}`)
+        } else {
+          console.warn('[BrainModeView] 会话启动失败，继续本地操作:', sessionResult.error)
+        }
+      } catch (error) {
+        console.error('[BrainModeView] 会话启动异常:', error)
+      }
       await nextTick()
       await initializeHeatmapSystem()
     })
     
     // 组件卸载
-    onUnmounted(() => {
-      console.log('[BrainModeView] 组件已卸载')
+    onUnmounted(async () => {
+      console.log('[BrainModeView] 组件正在卸载...')
+      
+      // 结束训练会话
+      try {
+        const sessionStatus = sessionManager.getSessionStatus()
+        if (sessionStatus.active) {
+          console.log('[BrainModeView] 结束训练会话...')
+          
+          const endResult = await sessionManager.endSession({
+            mode: 'brain',
+            end_reason: 'component_unmount',
+            final_screenshot: null // 可以在这里添加最终截图
+          })
+          
+          if (endResult.success) {
+            console.log('[BrainModeView] 训练会话已成功结束')
+          } else {
+            console.warn('[BrainModeView] 会话结束失败:', endResult.error)
+          }
+        }
+      } catch (error) {
+        console.error('[BrainModeView] 结束会话时发生异常:', error)
+      }
+      
       cleanup()
     })
     
