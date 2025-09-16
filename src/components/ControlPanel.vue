@@ -10,7 +10,7 @@
         </div>
         <div class="info-item">
           <StatusIndicator :status="deviceStatus.kangzhuxia" />
-          <span>康助侠设备: {{ getStatusText(deviceStatus.kangzhuxia) }} 低速模式</span>
+          <span>康复器械设备: {{ getStatusText(deviceStatus.kangzhuxia) }} 低速模式</span>
         </div>
         <div class="info-item">
           <span class="info-label">数据质量: </span>

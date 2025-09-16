@@ -4,7 +4,7 @@
     <div class="curve-section">
       <div class="curve-card">
         <div class="curve-header">
-          <h3 class="curve-title">血氧数据实时曲线</h3>
+          <h3 class="curve-title">血氧变化曲线</h3>
           <!-- 时间选择控件 -->
           <div class="time-selection-controls">
             <div class="time-range-info">
@@ -137,15 +137,6 @@ export default {
         animation: {
           duration: 200, // 缩短动画时间提升流畅度
           easing: 'linear' // 使用线性动画
-        },
-        title: {
-          text: '血氧数据变化情况',
-          left: 'center',
-          textStyle: {
-            color: '#000',
-            fontSize: 16,
-            fontWeight: 'bold'
-          }
         },
         tooltip: {
           trigger: 'axis',
@@ -665,7 +656,7 @@ export default {
 
 .curve-title {
   color: white;
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   margin: 0 0 15px 0;
   text-align: center;
@@ -699,7 +690,7 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
-  font-size: 12px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.8);
 }
 
@@ -718,7 +709,7 @@ export default {
 }
 
 .slider-label {
-  font-size: 12px;
+  font-size: 14px;
   color: rgba(255, 255, 255, 0.9);
   white-space: nowrap;
   margin-right: 5px;
@@ -770,7 +761,7 @@ export default {
   border: none;
   padding: 6px 12px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;

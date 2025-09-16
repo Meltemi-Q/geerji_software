@@ -16,22 +16,30 @@ export class TriangleDataProcessor {
    */
   async loadTriangleConfig() {
     try {
+      console.log('🔍 [TriangleDataProcessor] 开始加载Triangle配置...')
       const response = await fetch('/config/triangle_layout.json')
+      
+      console.log('🔍 [TriangleDataProcessor] Fetch响应状态:', {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok
+      })
+      
       if (!response.ok) {
-        throw new Error(`Failed to load Triangle config: ${response.status}`)
+        throw new Error(`Failed to load Triangle config: ${response.status} ${response.statusText}`)
       }
       
       this.triangleConfig = await response.json()
       this.layoutDimensions = this.triangleConfig.dimensions.dimensions_2d
       
-      console.log('[TriangleDataProcessor] 配置加载成功:', {
+      console.log('✅ [TriangleDataProcessor] 配置加载成功:', {
         dimensions: this.layoutDimensions,
         docks: this.triangleConfig.docks.length
       })
       
       return this.triangleConfig
     } catch (error) {
-      console.error('[TriangleDataProcessor] 配置加载失败:', error)
+      console.error('❌ [TriangleDataProcessor] 配置加载失败:', error)
       throw error
     }
   }
@@ -159,25 +167,32 @@ export class TriangleDataProcessor {
    */
   async processTriangleData() {
     try {
+      console.log('🚀 [TriangleDataProcessor] 开始完整数据处理流程...')
+      
       // 1. 加载配置
+      console.log('📋 [TriangleDataProcessor] 步骤1: 加载配置...')
       await this.loadTriangleConfig()
       
       // 2. 解析布局
+      console.log('🔧 [TriangleDataProcessor] 步骤2: 解析布局...')
       const { sources, detectors } = this.parseTriangleLayout()
       
       // 3. 计算通道位置
+      console.log('📍 [TriangleDataProcessor] 步骤3: 计算通道位置...')
       const channelData = this.calculateChannelPositions(sources, detectors)
       
-      console.log('[TriangleDataProcessor] 数据处理完成:', {
+      console.log('✅ [TriangleDataProcessor] 数据处理完成:', {
         sources: sources.length,
         detectors: detectors.length,
         channels: channelData.totalChannels,
+        channelPositionsLength: channelData.channelPositions.length,
         dimensions: this.layoutDimensions
       })
 
       return channelData
     } catch (error) {
-      console.error('[TriangleDataProcessor] 数据处理失败:', error)
+      console.error('❌ [TriangleDataProcessor] 数据处理失败:', error)
+      console.error('❌ [TriangleDataProcessor] 错误堆栈:', error.stack)
       throw error
     }
   }

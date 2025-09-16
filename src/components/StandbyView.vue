@@ -4,7 +4,7 @@
     <div class="top-header">
       <div class="system-branding">
         <span class="golgi-text-header">Golgi</span>
-        <span class="system-subtitle">近红外脑氧监测系统</span>
+        <span class="system-subtitle">脑机交互智能康复训练系统</span>
       </div>
     </div>
 
@@ -16,7 +16,7 @@
         </div>
         <div class="welcome-text">
           <h1 class="system-title">戈尔基康复训练系统</h1>
-          <p class="system-description">基于近红外光谱技术的智能康复训练平台</p>
+          <p class="system-description">基于近红外光学脑机交互的智能康复训练平台</p>
         </div>
       </div>
 
@@ -146,7 +146,16 @@
       </div>
     </div>
     
-    <!-- 患者信息弹窗 -->
+    <!-- 用户选择器 -->
+    <SearchableUserSelect
+      v-if="showPatientSelector"
+      :visible="showPatientSelector"
+      @close="showPatientSelector = false"
+      @select-patient="handleSelectExistingPatient"
+      @new-patient="handleSelectNewPatient"
+    />
+    
+    <!-- 用户信息弹窗 -->
     <PatientInfoModal 
       v-if="showPatientModal"
       @close="showPatientModal = false"
@@ -202,11 +211,14 @@
 <script>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PatientInfoModal from './PatientInfoModal.vue'
+import SearchableUserSelect from './SearchableUserSelect.vue'
+import { userDataService } from '../services/UserDataService.js'
 
 export default {
   name: 'StandbyView',
   components: {
-    PatientInfoModal
+    PatientInfoModal,
+    SearchableUserSelect
   },
   emits: ['start-training'],
   setup() {
@@ -220,6 +232,7 @@ export default {
       deviceCheck: false
     })
     const showPatientModal = ref(false)
+    const showPatientSelector = ref(false)
     const showDeviceCheck = ref(false)
     const deviceCheckProgress = ref(0)
 
@@ -236,7 +249,7 @@ export default {
         stepCompleted.value.deviceCheck = true
         currentStep.value = 3
       } else {
-        // 恢复患者信息状态
+        // 恢复用户信息状态
         const savedPatientInfo = localStorage.getItem('patientInfo')
         if (savedPatientInfo) {
           stepCompleted.value.patientInfo = true
@@ -284,17 +297,134 @@ export default {
       currentTime.value = new Date()
     }
 
-    // 打开患者信息弹窗
+    // 打开用户信息流程（先显示用户选择器）
     function openPatientInfo() {
+      showPatientSelector.value = true
+    }
+
+    // 处理选择现有用户
+    async function handleSelectExistingPatient(patient) {
+      console.log('[StandbyView] 选择现有用户:', patient.name)
+      
+      try {
+        // 获取完整用户详情
+        const patientDetail = await userDataService.getPatientDetail(patient.id)
+        
+        if (patientDetail) {
+          // 转换数据格式适配前端表单
+          const formData = {
+            name: patientDetail.name,
+            age: patientDetail.age,
+            phone: patientDetail.phone,
+            height: patientDetail.height || 170,
+            weight: patientDetail.weight || 65,
+            bloodPressure: {
+              systolic: patientDetail.blood_pressure?.systolic || null,
+              diastolic: patientDetail.blood_pressure?.diastolic || null
+            },
+            conditions: {
+              hypertension: patientDetail.conditions?.hypertension || false,
+              diabetes: patientDetail.conditions?.diabetes || false,
+              smoking: patientDetail.conditions?.smoking || false,
+              heartDisease: patientDetail.conditions?.heart_disease || false,
+              dyslipidemia: patientDetail.conditions?.dyslipidemia || false
+            }
+          }
+          
+          // 直接保存用户信息并标记为完成
+          savePatientInfo(formData)
+          console.log('[StandbyView] 现有用户信息自动填充完成')
+        }
+      } catch (error) {
+        console.error('[StandbyView] 获取用户详情失败:', error)
+        // 如果获取详情失败，仍然标记为完成，使用基础信息
+        const basicFormData = {
+          name: patient.name,
+          age: patient.age || 45,
+          phone: patient.phone || patient.id,
+          height: 170,
+          weight: 65,
+          bloodPressure: { systolic: null, diastolic: null },
+          conditions: {
+            hypertension: false, diabetes: false, smoking: false,
+            heartDisease: false, dyslipidemia: false
+          }
+        }
+        savePatientInfo(basicFormData)
+      }
+      
+      // 关闭用户选择器
+      showPatientSelector.value = false
+    }
+
+    // 处理选择新用户
+    function handleSelectNewPatient() {
+      console.log('[StandbyView] 选择新用户模式')
+      // 关闭用户选择器，打开用户信息弹窗
+      showPatientSelector.value = false
       showPatientModal.value = true
     }
 
-    // 保存患者信息
-    function savePatientInfo(data) {
-      localStorage.setItem('patientInfo', JSON.stringify(data))
-      stepCompleted.value.patientInfo = true
-      showPatientModal.value = false
-      currentStep.value = 2
+    // 保存用户信息
+    async function savePatientInfo(data) {
+      try {
+        // 保存到本地存储
+        localStorage.setItem('patientInfo', JSON.stringify(data))
+        
+        // 如果是新用户，尝试上传到云端并更新本地缓存
+        if (data.isNewUser !== false) {
+          console.log('[StandbyView] 新用户数据，准备上传到云端:', data.name)
+          
+          // 转换为云端API格式
+          const cloudUserData = {
+            name: data.name,
+            age: data.age,
+            gender: data.gender || '未知',
+            diagnosis: data.diagnosis || '康复训练',
+            height: data.height,
+            weight: data.weight,
+            blood_pressure_systolic: data.bloodPressure?.systolic,
+            blood_pressure_diastolic: data.bloodPressure?.diastolic,
+            hypertension: data.conditions?.hypertension ? 1 : 0,
+            diabetes: data.conditions?.diabetes ? 1 : 0,
+            heart_disease: data.conditions?.heartDisease ? 1 : 0,
+            dyslipidemia: data.conditions?.dyslipidemia ? 1 : 0,
+            smoking: data.conditions?.smoking ? 1 : 0
+          }
+          
+          try {
+            // 上传到云端（这里需要实现上传API调用）
+            // const savedUser = await userDataService.saveNewPatient(cloudUserData)
+            
+            // 暂时直接添加到本地缓存（模拟云端保存成功）
+            const displayUserData = {
+              id: `AUTO_${Date.now()}`,
+              name: data.name,
+              age: data.age,
+              phone: data.phone || '未填写',
+              diagnosis: data.diagnosis || '康复训练',
+              lastLogin: new Date().toISOString(),
+              isRecent: true
+            }
+            
+            // 添加到本地缓存
+            userDataService.addUserToCache(displayUserData)
+            console.log('[StandbyView] ✅ 新用户已添加到本地缓存')
+            
+          } catch (uploadError) {
+            console.warn('[StandbyView] ⚠️ 云端上传失败，但已保存到本地:', uploadError)
+          }
+        }
+        
+        // 更新UI状态
+        stepCompleted.value.patientInfo = true
+        showPatientModal.value = false
+        currentStep.value = 2
+        
+      } catch (error) {
+        console.error('[StandbyView] ❌ 保存用户信息失败:', error)
+        alert('保存用户信息失败，请重试')
+      }
     }
 
     // 开始设备检查
@@ -329,13 +459,16 @@ export default {
       currentStep,
       stepCompleted,
       showPatientModal,
+      showPatientSelector,
       showDeviceCheck,
       deviceCheckProgress,
       progressWidth,
       getStepClass,
       openPatientInfo,
       savePatientInfo,
-      startDeviceCheck
+      startDeviceCheck,
+      handleSelectExistingPatient,
+      handleSelectNewPatient
     }
   }
 }
@@ -372,7 +505,7 @@ export default {
 }
 
 .golgi-text-header {
-  font-size: 32px;
+  font-size: 38px;
   font-weight: 800;
   color: #ffffff;
   letter-spacing: 2px;
@@ -380,7 +513,7 @@ export default {
 }
 
 .system-subtitle {
-  font-size: 16px;
+  font-size: 30px;
   color: rgba(255, 255, 255, 0.9);
   font-weight: 500;
   letter-spacing: 1px;
@@ -427,7 +560,7 @@ export default {
 }
 
 .system-title {
-  font-size: 42px;
+  font-size: 44px;
   font-weight: 700;
   color: #ffffff;
   margin: 0;
@@ -480,13 +613,13 @@ export default {
 }
 
 .status-label {
-  font-size: 14px;
+  font-size: 24px;
   color: rgba(255, 255, 255, 0.7);
   font-weight: 500;
 }
 
 .status-value {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   color: #ffffff;
 }
@@ -549,7 +682,7 @@ export default {
 }
 
 .start-hint {
-  font-size: 16px;
+  font-size: 28px;
   color: rgba(255, 255, 255, 0.7);
   margin: 0;
   text-align: center;
@@ -698,7 +831,7 @@ export default {
 .node-number {
   color: white;
   font-weight: bold;
-  font-size: 16px;
+  font-size: 26px;
 }
 
 /* 步骤按钮 */
@@ -766,7 +899,7 @@ export default {
 }
 
 .step-title {
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
 }
 
@@ -805,7 +938,7 @@ export default {
 
 .check-title {
   color: #1e3c72;
-  font-size: 24px;
+  font-size: 30px;
   margin-bottom: 30px;
   font-weight: 600;
 }

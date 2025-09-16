@@ -4,7 +4,7 @@
     <div class="top-header">
       <div class="system-branding">
         <span class="golgi-text-header">Golgi</span>
-        <span class="system-subtitle">近红外脑氧监测系统</span>
+        <span class="system-subtitle">脑机交互智能康复训练系统</span>
       </div>
       <!-- 患者信息显示在右上角 -->
       <div class="patient-info-header">
@@ -216,7 +216,7 @@ export default {
 }
 
 .golgi-text-header {
-  font-size: 36px;
+  font-size: 40px;
   font-weight: 900;
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
@@ -225,7 +225,7 @@ export default {
 }
 
 .system-subtitle {
-  font-size: 16px;
+  font-size: 24px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.9);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -248,7 +248,7 @@ export default {
 }
 
 .training-time-header {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);

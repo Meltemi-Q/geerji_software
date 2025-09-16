@@ -97,7 +97,7 @@ export default {
 }
 
 .game-placeholder h3 {
-  font-size: 24px;
+  font-size: 28px;
   font-weight: 600;
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -105,7 +105,7 @@ export default {
 }
 
 .game-placeholder p {
-  font-size: 18px;
+  font-size: 20px;
   color: rgba(255, 255, 255, 0.8);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }

@@ -1,14 +1,28 @@
 <template>
   <div class="game-container">
-    <!-- 视频背景 -->
+    <!-- 双视频背景（防闪黑屏架构） -->
     <video
-      ref="videoPlayer"
-      :src="currentVideo"
+      ref="videoPlayer1"
       autoplay
       loop
       muted
+      preload="auto"
       class="video-background"
-      :class="{ 'transitioning': isTransitioning }"
+      :class="{ 'video-active': activePlayer === 1 }"
+      :playbackRate="videoPlaybackRate"
+      @ended="handleVideoEnded"
+      @error="handleVideoError"
+      @canplay="handleVideoCanPlay"
+    ></video>
+    
+    <video
+      ref="videoPlayer2"
+      autoplay
+      loop
+      muted
+      preload="auto"
+      class="video-background"
+      :class="{ 'video-active': activePlayer === 2 }"
       :playbackRate="videoPlaybackRate"
       @ended="handleVideoEnded"
       @error="handleVideoError"
@@ -112,10 +126,17 @@ export default {
     const showAlert = ref(false)
     const alertMessage = ref('')
     
-    // 视频相关
-    const videoPlayer = ref(null)
+    // 双视频相关（防闪黑屏架构）
+    const videoPlayer1 = ref(null)
+    const videoPlayer2 = ref(null)
+    const activePlayer = ref(1) // 当前活跃的播放器 1 or 2
     const currentVideoState = ref('straight')
     const isTransitioning = ref(false)
+    
+    // 双视频状态管理
+    const player1State = ref('straight') // player1当前加载的视频状态
+    const player2State = ref('') // player2当前加载的视频状态
+    const videoQueue = ref([]) // 视频切换队列
     
     // 视频资源路径
     const videoSources = {
@@ -144,6 +165,36 @@ export default {
       const speedFactor = gameSpeed.value / 5.0 // 正常速度为5
       return Math.max(0.5, Math.min(1.5, baseRate * speedFactor))
     })
+
+    // 双视频预加载和管理
+    const initializeVideo = (videoElement, videoState) => {
+      if (!videoElement || !videoSources[videoState]) return false
+      
+      videoElement.src = videoSources[videoState]
+      videoElement.loop = (
+        videoState === videoStates.STRAIGHT || 
+        videoState === videoStates.LEFT_STRAIGHT || 
+        videoState === videoStates.RIGHT_STRAIGHT
+      )
+      videoElement.load()
+      return true
+    }
+
+    const preloadAllVideos = () => {
+      // 初始化第一个播放器为straight视频
+      if (videoPlayer1.value) {
+        initializeVideo(videoPlayer1.value, 'straight')
+        player1State.value = 'straight'
+        console.log('[双视频] Player1 预加载: straight')
+      }
+      
+      // 第二个播放器暂时为空，等待第一次切换时加载
+      if (videoPlayer2.value) {
+        player2State.value = ''
+        videoPlayer2.value.style.visibility = 'hidden'
+        console.log('[双视频] Player2 待机中')
+      }
+    }
 
     // 车把手相关
     const windowWidth = ref(window.innerWidth)
@@ -200,6 +251,11 @@ export default {
       })
     }
 
+    // 获取当前活跃播放器（金币逻辑专用）
+    const getCurrentActivePlayer = () => {
+      return activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
+    }
+
     const getCoinStyle = (coin) => {
       const zPos = coin.position.z
       const scale = 0.2 + (zPos / 100) * 0.8
@@ -214,11 +270,14 @@ export default {
       // 根据当前视频状态调整曲率
       let curveOffset = 0
       
+      // 获取当前活跃播放器
+      const currentPlayer = getCurrentActivePlayer()
+      
       // 左转状态 - 强烈向左弯曲
       if (currentVideoState.value === videoStates.LEFT_TURN) {
         // 转弯过程中，曲率随视频播放进度变化
-        const progress = videoPlayer.value ? 
-          Math.min(1, videoPlayer.value.currentTime / videoPlayer.value.duration) : 0
+        const progress = currentPlayer ? 
+          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
         curveOffset = (100 - zPos) * -0.15 * progress
       } 
       // 左直行状态 - 保持左偏
@@ -227,14 +286,14 @@ export default {
       }
       // 左回中状态 - 逐渐减小左偏
       else if (currentVideoState.value === videoStates.LEFT_TO_CENTER) {
-        const progress = videoPlayer.value ? 
-          Math.min(1, videoPlayer.value.currentTime / videoPlayer.value.duration) : 0
+        const progress = currentPlayer ? 
+          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
         curveOffset = (100 - zPos) * -0.15 * (1 - progress) // 从左偏逐渐回中
       }
       // 右转状态 - 强烈向右弯曲
       else if (currentVideoState.value === videoStates.RIGHT_TURN) {
-        const progress = videoPlayer.value ? 
-          Math.min(1, videoPlayer.value.currentTime / videoPlayer.value.duration) : 0
+        const progress = currentPlayer ? 
+          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
         curveOffset = (100 - zPos) * 0.15 * progress
       }
       // 右直行状态 - 保持右偏
@@ -243,8 +302,8 @@ export default {
       }
       // 右回中状态 - 逐渐减小右偏
       else if (currentVideoState.value === videoStates.RIGHT_TO_CENTER) {
-        const progress = videoPlayer.value ? 
-          Math.min(1, videoPlayer.value.currentTime / videoPlayer.value.duration) : 0
+        const progress = currentPlayer ? 
+          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
         curveOffset = (100 - zPos) * 0.15 * (1 - progress) // 从右偏逐渐回中
       }
       
@@ -353,106 +412,115 @@ export default {
       }
     }
 
-    // 键盘控制
+    // 键盘按下处理 - 来自参考项目的稳定版本
     const handleKeyDown = (e) => {
-      if (isTransitioning.value || showInstructions.value) return
+      if (isTransitioning.value) return  // 过渡期间不响应按键
       
       if (e.key === 'ArrowLeft') {
         keyboard.value.ArrowLeft = true
         
+        // 根据当前状态决定下一个视频
         if (currentVideoState.value === videoStates.STRAIGHT) {
+          // 直行状态按左键 -> 左转
           switchVideo(videoStates.LEFT_TURN)
         }
         else if (currentVideoState.value === videoStates.RIGHT_STRAIGHT) {
+          // 右直行按左键 -> 右回中
           switchVideo(videoStates.RIGHT_TO_CENTER)
         }
+        // 其他状态不响应
       } 
       else if (e.key === 'ArrowRight') {
         keyboard.value.ArrowRight = true
         
+        // 根据当前状态决定下一个视频
         if (currentVideoState.value === videoStates.STRAIGHT) {
+          // 直行状态按右键 -> 右转
           switchVideo(videoStates.RIGHT_TURN)
         }
         else if (currentVideoState.value === videoStates.LEFT_STRAIGHT) {
+          // 左直行按右键 -> 左回中
           switchVideo(videoStates.LEFT_TO_CENTER)
         }
+        // 其他状态不响应
       }
     }
 
+    // 键盘松开处理 - 来自参考项目的稳定版本
     const handleKeyUp = (e) => {
       if (e.key === 'ArrowLeft') {
         keyboard.value.ArrowLeft = false
         
+        // 左直行中松开左键且右键没按 -> 左回中
         if (currentVideoState.value === videoStates.LEFT_STRAIGHT && !keyboard.value.ArrowRight) {
           switchVideo(videoStates.LEFT_TO_CENTER)
         }
+        // 左转中松开不做特殊处理，等视频结束时处理
       } 
       else if (e.key === 'ArrowRight') {
         keyboard.value.ArrowRight = false
         
+        // 右直行中松开右键且左键没按 -> 右回中
         if (currentVideoState.value === videoStates.RIGHT_STRAIGHT && !keyboard.value.ArrowLeft) {
           switchVideo(videoStates.RIGHT_TO_CENTER)
         }
+        // 右转中松开不做特殊处理，等视频结束时处理
       }
     }
 
-    // 视频切换
-    const switchVideo = (newState) => {
+    // 双视频无缝切换（防闪黑屏核心技术）
+    const switchVideo = async (newState) => {
       if (currentVideoState.value === newState || isTransitioning.value) return
       
-      console.log(`[游戏] 切换视频: ${currentVideoState.value} -> ${newState}`)
+      console.log(`[双视频] 切换视频: ${currentVideoState.value} -> ${newState}`)
       isTransitioning.value = true
       
-      currentVideoState.value = newState
+      // 获取当前活跃和待机播放器
+      const currentPlayer = activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
+      const nextPlayer = activePlayer.value === 1 ? videoPlayer2.value : videoPlayer1.value
+      const nextPlayerRef = activePlayer.value === 1 ? player2State : player1State
       
-      if (videoPlayer.value) {
-        videoPlayer.value.style.opacity = '0'
+      // 在待机播放器中预加载新视频
+      if (nextPlayer && initializeVideo(nextPlayer, newState)) {
+        nextPlayerRef.value = newState
         
-        setTimeout(() => {
-          videoPlayer.value.src = videoSources[newState]
-          videoPlayer.value.currentTime = 0
-          
-          // 设置循环播放属性
-          videoPlayer.value.loop = (
-            newState === videoStates.STRAIGHT || 
-            newState === videoStates.LEFT_STRAIGHT || 
-            newState === videoStates.RIGHT_STRAIGHT
-          )
-          
-          videoPlayer.value.load()
-          videoPlayer.value.playbackRate = videoPlaybackRate.value
-          
-          const playPromise = videoPlayer.value.play()
-          
-          if (playPromise !== undefined) {
-            playPromise
-              .then(() => {
-                videoPlayer.value.style.opacity = '1'
-                setTimeout(() => {
-                  isTransitioning.value = false
-                }, 250)
-              })
-              .catch(error => {
-                console.error('视频播放失败:', error)
-                isTransitioning.value = false
-                videoPlayer.value.muted = true
-                if (newState === videoStates.STRAIGHT || 
-                    newState === videoStates.LEFT_STRAIGHT || 
-                    newState === videoStates.RIGHT_STRAIGHT) {
-                  videoPlayer.value.loop = true
-                }
-                videoPlayer.value.play().catch(() => {
-                  console.error('重试播放失败')
-                })
-              })
-          } else {
-            videoPlayer.value.style.opacity = '1'
-            setTimeout(() => {
-              isTransitioning.value = false
-            }, 250)
+        try {
+          // 同步播放时间（关键技术点）
+          if (currentPlayer && !currentPlayer.paused) {
+            const currentTime = currentPlayer.currentTime
+            nextPlayer.currentTime = currentTime
           }
-        }, 250)
+          
+          // 设置播放速度
+          nextPlayer.playbackRate = videoPlaybackRate.value
+          nextPlayer.muted = true
+          
+          // 预播放待机视频（静音）
+          await nextPlayer.play()
+          
+          // 立即切换显示（无缝切换关键）
+          nextPlayer.style.visibility = 'visible'
+          currentPlayer.style.visibility = 'hidden'
+          
+          // 更新活跃播放器
+          activePlayer.value = activePlayer.value === 1 ? 2 : 1
+          currentVideoState.value = newState
+          
+          // 停止之前的播放器节省资源
+          if (currentPlayer) {
+            currentPlayer.pause()
+          }
+          
+          console.log(`[双视频] 切换完成: Player${activePlayer.value} 播放 ${newState}`)
+          
+        } catch (error) {
+          console.error('[双视频] 播放失败:', error)
+          // 降级到当前播放器继续播放
+          nextPlayer.style.visibility = 'hidden'
+        }
       }
+      
+      isTransitioning.value = false
     }
 
     // 处理视频结束事件
@@ -505,9 +573,10 @@ export default {
     }
 
     const handleVideoCanPlay = () => {
-      if (videoPlayer.value && videoPlayer.value.paused) {
-        videoPlayer.value.play().catch(error => {
-          console.error('视频播放失败:', error)
+      const currentPlayer = getCurrentActivePlayer()
+      if (currentPlayer && currentPlayer.paused) {
+        currentPlayer.play().catch(error => {
+          console.error('[双视频] 视频播放失败:', error)
         })
       }
     }
@@ -542,19 +611,23 @@ export default {
       }
     }, { deep: true })
 
-    // 组件生命周期
+    // 双视频组件生命周期
     let dataUpdateLoop
     onMounted(() => {
-      console.log('[游戏组件] 初始化完成')
+      console.log('[双视频] 组件初始化开始')
       
-      if (videoPlayer.value) {
-        videoPlayer.value.loop = true
-        videoPlayer.value.muted = true
-        videoPlayer.value.play().catch(err => {
-          console.error('初始视频播放失败:', err)
+      // 初始化双视频系统
+      preloadAllVideos()
+      
+      // 启动第一个播放器
+      if (videoPlayer1.value) {
+        videoPlayer1.value.muted = true
+        videoPlayer1.value.style.visibility = 'visible'
+        videoPlayer1.value.play().catch(err => {
+          console.error('[双视频] Player1 初始播放失败:', err)
           setTimeout(() => {
-            videoPlayer.value.play().catch(error => 
-              console.error('重试初始视频播放失败:', error)
+            videoPlayer1.value.play().catch(error => 
+              console.error('[双视频] Player1 重试播放失败:', error)
             )
           }, 500)
         })
@@ -566,6 +639,48 @@ export default {
       window.addEventListener('keydown', handleKeyDown)
       window.addEventListener('keyup', handleKeyUp)
       window.addEventListener('resize', handleResize)
+    })
+    
+    // 同步播放状态管理
+    const syncVideoStates = () => {
+      const currentPlayer = activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
+      
+      if (currentPlayer) {
+        // 同步播放速度
+        currentPlayer.playbackRate = videoPlaybackRate.value
+        
+        // 监控播放状态
+        if (currentPlayer.paused) {
+          currentPlayer.play().catch(err => {
+            console.warn('[双视频] 自动恢复播放失败:', err)
+          })
+        }
+      }
+    }
+    
+    // 定时同步播放状态
+    setInterval(syncVideoStates, 1000)
+
+    // 双视频IntersectionObserver优化
+    onMounted(() => {
+      const dualVideoObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            const video = entry.target
+            if (video.paused && video.style.visibility !== 'hidden') {
+              video.play().catch(err => console.error('[双视频] 懒加载播放失败:', err))
+            }
+          }
+        })
+      }, { threshold: 0.1 })
+
+      // 监控两个播放器
+      if (videoPlayer1.value) {
+        dualVideoObserver.observe(videoPlayer1.value)
+      }
+      if (videoPlayer2.value) {
+        dualVideoObserver.observe(videoPlayer2.value)
+      }
     })
 
     onUnmounted(() => {
@@ -581,10 +696,14 @@ export default {
       gameSpeed,
       score,
       oxygenData,
-      videoPlayer,
+      // 双视频相关
+      videoPlayer1,
+      videoPlayer2,
+      activePlayer,
       currentVideo,
       videoPlaybackRate,
       isTransitioning,
+      getCurrentActivePlayer, // 金币逻辑需要
       currentHandlebarImage,
       handlebarStyle,
       visibleCoins,
@@ -624,14 +743,15 @@ export default {
   height: 100%;
   object-fit: cover;
   z-index: 1;
-  transition: opacity 0.2s ease-in-out;
-  background-color: #333;
-  transform: translateZ(0);
-  will-change: opacity;
+  background-color: #333; /* 防闪白背景 */
+  transform: translateZ(0); /* 硬件加速 */
+  will-change: visibility; /* 优化visibility变化 */
+  visibility: hidden; /* 默认隐藏，通过JS控制显示 */
 }
 
-.video-background.transitioning {
-  opacity: 0;
+/* 双视频切换样式 */
+.video-active {
+  visibility: visible !important;
 }
 
 .handlebar {

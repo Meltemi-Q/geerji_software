@@ -7,7 +7,7 @@
       </div>
       <div class="status-item">
         <span class="status-icon" :class="getKangzhuxiaStatusClass()">●</span>
-        <span class="status-text">康助侠 {{ getKangzhuxiaStatusText() }}</span>
+        <span class="status-text">康复器械 {{ getKangzhuxiaStatusText() }}</span>
       </div>
     </div>
   </div>

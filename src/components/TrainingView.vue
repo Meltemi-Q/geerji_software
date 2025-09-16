@@ -208,7 +208,7 @@
             </div>
             <div class="status-indicator-large" :class="kangzhuxiaStatus.connected ? 'connected' : 'disconnected'">
               <div class="status-dot"></div>
-              <span class="status-text-large">康助侠 {{ getKangzhuxiaStatusText() }}</span>
+              <span class="status-text-large">康复器械 {{ getKangzhuxiaStatusText() }}</span>
             </div>
           </div>
           
@@ -246,7 +246,7 @@
             <span>结束训练</span>
           </button>
           
-          <!-- 康助侠设备控制 -->
+          <!-- 康复器械设备控制 -->
           <button 
             v-if="!kangzhuxiaStatus.connected"
             class="large-control-btn connect-btn"
@@ -256,7 +256,7 @@
               <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
               <circle cx="16" cy="14" r="3" fill="currentColor"/>
             </svg>
-            <span>连接康助侠</span>
+            <span>连接康复器械</span>
           </button>
           
           <button 
@@ -268,7 +268,7 @@
               <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
               <line x1="10" y1="10" x2="22" y2="22" stroke="currentColor" stroke-width="3"/>
             </svg>
-            <span>断开康助侠</span>
+            <span>断开康复器械</span>
           </button>
           
           <!-- 紧急停止按钮 -->
@@ -290,7 +290,7 @@
     <div class="bottom-branding">
       <div class="golgi-logo">
         <span class="golgi-text">Golgi</span>
-        <span class="golgi-subtitle">近红外脑氧监测系统</span>
+        <span class="golgi-subtitle">脑机交互智能康复训练系统</span>
       </div>
     </div>
   </div>
@@ -921,7 +921,11 @@ export default {
           updateTimer = null
         }
       } else if (displayMode.value === 'curve') {
-        // 清理曲线图
+        // 清理曲线图与定时器，避免重复更新导致重绘叠加
+        if (updateTimer) {
+          clearInterval(updateTimer)
+          updateTimer = null
+        }
         if (curveChart) {
           curveChart.dispose()
           curveChart = null
@@ -1635,6 +1639,10 @@ export default {
       const chart = echarts.init(curveChartRef.value)
       
       const option = {
+        // 关闭更新动画，避免曲线在数据更新时发生形变，增强“平移”观感
+        animation: false,
+        animationDurationUpdate: 0,
+        animationEasingUpdate: 'linear',
         title: {
           text: '实时血氧浓度',
           left: 'center',
@@ -1774,20 +1782,20 @@ export default {
       curveDataPoints.value.hbo.push([currentTime, hboValue])
       curveDataPoints.value.hbr.push([currentTime, hbrValue])
       
-      // 保持数据点数量在合理范围内（最多保存5分钟数据）
-      const maxPoints = 600 // 5分钟 * 60秒 * 2次/秒
-      if (curveDataPoints.value.hbo.length > maxPoints) {
-        curveDataPoints.value.hbo.shift()
-        curveDataPoints.value.hbr.shift()
-      }
+      // 使用时间窗口裁剪数据，营造稳定“平移”效果
+      const windowMs = curveTimeRange.value * 1000
+      const cutoff = currentTime - windowMs
+      curveDataPoints.value.hbo = curveDataPoints.value.hbo.filter(p => p[0] >= cutoff)
+      curveDataPoints.value.hbr = curveDataPoints.value.hbr.filter(p => p[0] >= cutoff)
       
-      // 更新图表
+      // 更新图表 + 固定x轴窗口，避免自动缩放带来的“拉伸/压缩”感
       curveChart.setOption({
+        xAxis: { min: cutoff, max: currentTime },
         series: [
           { data: curveDataPoints.value.hbo },
           { data: curveDataPoints.value.hbr }
         ]
-      })
+      }, false, true)
     }
     
     // 重置曲线图缩放

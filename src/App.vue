@@ -54,6 +54,7 @@ import AssessmentView from './components/AssessmentView.vue'
 import StandbyView from './components/StandbyView.vue'
 import HeatmapTestView from './components/HeatmapTestView.vue' // HM测试页面
 import { sessionManager } from './services/sessionManager.js'
+import { userDataService } from './services/UserDataService.js'
 
 export default {
   name: 'App',
@@ -120,12 +121,36 @@ export default {
       }
     }
     
-    // 患者信息
+    // 患者信息 - 从localStorage读取选中的用户
     const patientInfo = ref({
       name: '张三',
       age: 87,
       room: '201-3'
     })
+    
+    // 从localStorage加载患者信息
+    function loadPatientInfo() {
+      try {
+        const savedPatientInfo = localStorage.getItem('patientInfo')
+        if (savedPatientInfo) {
+          const patientData = JSON.parse(savedPatientInfo)
+          console.log('[用户信息同步] 从localStorage加载患者信息:', patientData)
+          
+          // 更新患者信息显示
+          patientInfo.value = {
+            name: patientData.name || '张三',
+            age: patientData.age || 87,
+            room: patientData.room || '201-3'
+          }
+          
+          console.log('[用户信息同步] ✅ 患者信息已同步到训练界面:', patientInfo.value)
+        } else {
+          console.log('[用户信息同步] 未找到已保存的患者信息，使用默认值')
+        }
+      } catch (error) {
+        console.error('[用户信息同步] 读取患者信息失败:', error)
+      }
+    }
     
     // 设备状态
     const deviceStatus = ref({
@@ -480,7 +505,21 @@ export default {
     async function startTraining() {
       console.log('[训练调试] 开始训练流程...')
       
-      // 1. 启动训练会话
+      // 0. 加载最新的患者信息
+      loadPatientInfo()
+      
+      // 1. 同步患者信息到云端
+      console.log('[云端同步] 同步患者信息到云端...')
+      const syncResult = await userDataService.syncCurrentPatientToCloud()
+      if (syncResult.success) {
+        console.log('[云端同步] ✅ 患者信息同步成功:', syncResult.message)
+        console.log('[云端同步] 云端患者ID:', syncResult.patient_id)
+      } else {
+        console.warn('[云端同步] ⚠️ 患者信息同步失败:', syncResult.error)
+        console.warn('[云端同步] 将以离线模式继续训练')
+      }
+      
+      // 2. 启动训练会话
       console.log('[会话管理] 启动新的训练会话...')
       const sessionResult = await sessionManager.startSession('brain')
       if (!sessionResult.success) {
@@ -490,13 +529,13 @@ export default {
         console.log('[会话管理] 会话启动成功:', sessionResult.session_id)
       }
       
-      // 2. 确保康助侠设备已连接
+      // 3. 确保康助侠设备已连接
       if (!kangzhuxiaStatus.value.connected) {
         console.log('[训练调试] 连接康助侠设备...')
         await connectKangzhuxia()
       }
       
-      // 3. 设置应用训练状态
+      // 4. 设置应用训练状态
       appState.value = 'training'
       trainingStatus.value = {
         isTraining: true,
@@ -512,11 +551,11 @@ export default {
       
       console.log('[训练调试] 训练状态已设置:', trainingStatus.value)
       
-      // 4. 立即开始数据模拟更新（不等待康助侠连接）
+      // 5. 立即开始数据模拟更新（不等待康助侠连接）
       console.log('[训练调试] 启动数据模拟...')
       startDataSimulation()
       
-      // 5. 异步启动康助侠数据采集
+      // 6. 异步启动康助侠数据采集
       startKangzhuxiaCollection().catch(error => {
         console.error('[训练调试] 康助侠连接失败，但训练继续:', error)
       })
@@ -609,9 +648,113 @@ export default {
     }
     
     // 保存记录
-    function saveRecord() {
-      console.log('保存训练记录')
-      // TODO: 调用API保存记录
+    async function saveRecord() {
+      console.log('[保存记录] 开始保存训练记录...')
+      
+      try {
+        // 获取当前训练会话状态
+        const sessionStatus = sessionManager.getSessionStatus()
+        
+        if (!sessionStatus.active && !sessionStatus.session) {
+          console.warn('[保存记录] 没有活动会话或历史会话数据，创建离线记录')
+          // 创建离线训练记录
+          const offlineRecord = {
+            patient_info: patientInfo.value,
+            training_summary: trainingSummary.value,
+            brain_activity_score: brainActivityScore.value,
+            assessment_text: assessmentText.value,
+            combined_heatmap: combinedHeatmap.value,
+            timestamp: new Date().toISOString(),
+            record_type: 'offline_manual_save',
+            patient_id: localStorage.getItem('current_patient_id'),
+            notes: '用户在评估界面手动保存的训练记录'
+          }
+          
+          // 保存到localStorage作为备份
+          const recordKey = `training_record_${Date.now()}`
+          localStorage.setItem(recordKey, JSON.stringify(offlineRecord))
+          console.log('[保存记录] ✅ 离线训练记录已保存到本地存储:', recordKey)
+          console.log('[保存记录] 患者:', offlineRecord.patient_info.name)
+          return
+        }
+        
+        // 构建完整的训练记录
+        const trainingRecord = {
+          // 患者信息
+          patient_info: {
+            name: patientInfo.value.name,
+            age: patientInfo.value.age,
+            patient_id: localStorage.getItem('current_patient_id')
+          },
+          
+          // 训练总结
+          training_summary: {
+            duration: trainingSummary.value.duration,
+            avgHboChange: trainingSummary.value.avgHboChange,
+            avgHbrChange: trainingSummary.value.avgHbrChange,
+            total_data_points: sessionStatus.stats?.totalDataPoints || 0
+          },
+          
+          // 评估结果
+          assessment: {
+            brain_activity_score: brainActivityScore.value,
+            assessment_text: assessmentText.value,
+            quality_score: sessionStatus.stats?.qualityScore || 0
+          },
+          
+          // 热力图数据 (如果有的话)
+          heatmap_data: combinedHeatmap.value ? {
+            data: combinedHeatmap.value,
+            timestamp: new Date().toISOString()
+          } : null,
+          
+          // 会话信息
+          session_info: sessionStatus.session,
+          
+          // 记录元信息
+          record_metadata: {
+            saved_at: new Date().toISOString(),
+            record_type: 'training_completion',
+            system_version: '1.0.0'
+          }
+        }
+        
+        console.log('[保存记录] 训练记录数据:', trainingRecord)
+        
+        // 保存到localStorage作为本地备份
+        const localRecordKey = `training_record_${Date.now()}`
+        localStorage.setItem(localRecordKey, JSON.stringify(trainingRecord))
+        
+        // 如果有云端同步能力，尝试上传到云端
+        const patientId = localStorage.getItem('current_patient_id')
+        if (patientId) {
+          console.log('[保存记录] 尝试上传训练记录到云端...')
+          
+          // 这里可以扩展云端API调用
+          // 目前sessionManager已经在endSession时自动上传了训练数据
+          // 这里主要是保存用户主动保存的完整记录
+          
+          console.log('[保存记录] ✅ 训练记录保存完成')
+          console.log('[保存记录] 患者ID:', patientId)
+          console.log('[保存记录] 本地存储Key:', localRecordKey)
+        } else {
+          console.warn('[保存记录] 未找到患者ID，仅保存到本地存储')
+        }
+        
+      } catch (error) {
+        console.error('[保存记录] ❌ 保存训练记录失败:', error)
+        
+        // 错误情况下也尝试保存基本信息
+        const errorRecord = {
+          error: error.message,
+          patient_info: patientInfo.value,
+          timestamp: new Date().toISOString(),
+          record_type: 'error_fallback'
+        }
+        
+        localStorage.setItem(`error_record_${Date.now()}`, JSON.stringify(errorRecord))
+        console.log('[保存记录] 错误记录已保存到本地存储')
+      }
     }
     
     // 开始新训练
@@ -638,6 +781,9 @@ export default {
         speed: 'low',
         sessionId: null
       }
+      
+      // 重新加载患者信息（用户可能选择了新的患者）
+      loadPatientInfo()
       
       // 重置数值到初始状态
       currentValues.value = {
@@ -770,6 +916,9 @@ export default {
     onMounted(async () => {
       loadChannelMap()
       
+      // 加载患者信息
+      loadPatientInfo()
+      
       // 尝试恢复中断的训练会话
       console.log('[会话管理] 检查是否需要恢复会话...')
       const restoreResult = await sessionManager.restoreSession()
@@ -818,6 +967,7 @@ export default {
       selectedTimeRange,
       getHistoryData,
       updateSelectedTimeRange,
+      loadPatientInfo,
       startTraining,
       pauseTraining,
       stopTraining,

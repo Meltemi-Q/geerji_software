@@ -17,7 +17,7 @@
         </div>
         <div class="device-item">
           <StatusIndicator :status="deviceStatus.kangzhuxia" />
-          <span>康助侠{{ getStatusText(deviceStatus.kangzhuxia) }}</span>
+          <span>康复器械{{ getStatusText(deviceStatus.kangzhuxia) }}</span>
         </div>
       </div>
     </div>

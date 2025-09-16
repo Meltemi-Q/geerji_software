@@ -4,7 +4,7 @@
     <div class="top-header">
       <div class="system-branding">
         <span class="golgi-text-header">Golgi</span>
-        <span class="system-subtitle">近红外脑氧监测系统</span>
+        <span class="system-subtitle">脑机交互智能康复训练系统</span>
       </div>
       <div class="session-info">
         <span class="session-status">训练已完成</span>
@@ -17,8 +17,7 @@
         <!-- 左上角：时间曲线 -->
         <div class="grid-card time-curve-card">
           <div class="card-header">
-            <h3 class="card-title">训练时间曲线</h3>
-            <div class="card-subtitle">血氧数据随时间变化</div>
+            <h3 class="card-title">血氧变化曲线</h3>
           </div>
           <div class="card-content">
             <div ref="timeCurveRef" class="curve-chart"></div>
@@ -28,8 +27,7 @@
         <!-- 右上角：评估状态 -->
         <div class="grid-card assessment-status-card">
           <div class="card-header">
-            <h3 class="card-title">训练评估</h3>
-            <div class="card-subtitle">综合评价结果</div>
+            <h3 class="card-title">综合评估结果</h3>
           </div>
           <div class="card-content status-content">
             <div class="status-badge" :class="activityLevelClass">
@@ -60,8 +58,7 @@
         <!-- 左下角：专业大脑热力图 -->
         <div class="grid-card brain-heatmap-card">
           <div class="card-header">
-            <h3 class="card-title">大脑活跃度热力图</h3>
-            <div class="card-subtitle">完整训练时段平均</div>
+            <h3 class="card-title">脑区活跃度热力图</h3>
           </div>
           <div class="card-content brain-content">
             <!-- 专业大脑模式颜色条 -->
@@ -77,35 +74,23 @@
           </div>
         </div>
 
-        <!-- 右下角：康复建议 -->
+        <!-- 右下角：康复建议 (方案二重构) -->
         <div class="grid-card recovery-advice-card">
           <div class="card-header">
             <h3 class="card-title">康复建议</h3>
-            <div class="card-subtitle">个性化训练指导</div>
           </div>
           <div class="card-content advice-content">
-            <div class="advice-main">
-              <div class="advice-title">{{ assessmentText.title }}</div>
-              <div class="advice-description">{{ assessmentText.description }}</div>
-            </div>
-            <div class="advice-suggestions">
-              <div class="suggestion-item">
-                <div class="suggestion-icon">
-                  <svg width="20" height="20">
-                    <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2"/>
-                    <path d="M10 6v4l3 3" stroke="currentColor" stroke-width="2"/>
-                  </svg>
+            <div class="advice-sections">
+              <div 
+                v-for="section in currentAdvice.sections" 
+                :key="section.label"
+                class="advice-section"
+              >
+                <div class="section-header">
+                  <div class="section-bullet"></div>
+                  <span class="section-label">{{ section.label }}</span>
                 </div>
-                <span>建议训练时间：15-20分钟</span>
-              </div>
-              <div class="suggestion-item">
-                <div class="suggestion-icon">
-                  <svg width="20" height="20">
-                    <path d="M3 9l9-7 9 7v11c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V9z" 
-                          fill="none" stroke="currentColor" stroke-width="2"/>
-                  </svg>
-                </div>
-                <span>{{ assessmentText.suggestion }}</span>
+                <div class="section-content">{{ section.content }}</div>
               </div>
             </div>
           </div>
@@ -271,6 +256,58 @@ export default {
     // 功能1：传入配置参数到HeatmapRenderer构造函数
     const heatmapRenderer = new HeatmapRenderer(heatmapConfig)
     
+    // 康复建议数据结构
+    const rehabilitationContent = {
+      "优秀": {
+        sections: [
+          {
+            label: "训练安排",
+            content: "建议在治疗师指导下保持当前训练频率，单次训练时长以您个体化的康复方案为准，注重控制负荷，避免疲劳。"
+          },
+          {
+            label: "技术要点",
+            content: "强调动作控制质量，适当放缓运动速度，增强神经肌肉控制与协调能力，进一步提升运动表现。"
+          },
+          {
+            label: "参与鼓励",
+            content: "您的康复经验对他人有积极影响，可在安全范围内适当交流。"
+          }
+        ]
+      },
+      "良好": {
+        sections: [
+          {
+            label: "训练安排",
+            content: "建议维持每周训练频次，具体单次时长请遵循治疗师的个性化方案，重在规律与可控性。"
+          },
+          {
+            label: "技术要点",
+            content: "继续完善动作模式，注重训练中的本体感觉输入，提高动作完成质量。"
+          },
+          {
+            label: "防护建议",
+            content: "训练前后请按治疗师指导进行关节保护与放松活动，预防代偿及劳损。"
+          }
+        ]
+      },
+      "一般": {
+        sections: [
+          {
+            label: "训练安排",
+            content: "以建立训练习惯为主，频率和强度应严格遵从治疗师建议，确保训练安全性。"
+          },
+          {
+            label: "技术要点",
+            content: "加强训练中的自我觉察与反馈，配合治疗师不断微调动作，打好基础。"
+          },
+          {
+            label: "心理支持",
+            content: "请勿与他人比较，关注自身每一点进步。康复是一个持续过程，您的努力终会带来改善。"
+          }
+        ]
+      }
+    }
+    
     
     
     // 计算活跃度等级（基于训练总结数据）
@@ -286,6 +323,12 @@ export default {
       if (avgChange > 0.05) return '优秀'
       if (avgChange > 0.02) return '良好'
       return '一般'
+    })
+    
+    // 当前康复建议计算属性
+    const currentAdvice = computed(() => {
+      const level = activityLevelText.value // "优秀"/"良好"/"一般"
+      return rehabilitationContent[level] || rehabilitationContent["一般"]
     })
     
     const activityLevelDescription = computed(() => {
@@ -735,6 +778,10 @@ export default {
         
       } catch (error) {
         console.error('[评估界面] 保存评估记录失败:', error)
+        
+        // 【修复】即使云端操作失败，也要触发save-record事件（离线模式支持）
+        console.log('[评估界面] 云端保存失败，触发离线保存模式')
+        emit('save-record')
         uploadStatus.value = {
           isUploading: false,
           progress: '',
@@ -791,6 +838,7 @@ export default {
       activityLevelClass,
       activityLevelText,
       activityLevelDescription,
+      currentAdvice,
       uploadStatus,
       handleSaveRecord
     }
@@ -815,10 +863,12 @@ export default {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 20px 40px;
+  padding: clamp(15px, 2vh, 25px) clamp(20px, 4vw, 40px);
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  height: clamp(60px, 8vh, 100px); /* 响应式头部高度 */
+  flex-shrink: 0;
 }
 
 .system-branding {
@@ -829,7 +879,7 @@ export default {
 }
 
 .golgi-text-header {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 800;
   color: #ffffff;
   letter-spacing: 1px;
@@ -837,7 +887,7 @@ export default {
 }
 
 .system-subtitle {
-  font-size: 14px;
+  font-size: 28px;
   color: rgba(255, 255, 255, 0.8);
   font-weight: 500;
 }
@@ -852,7 +902,7 @@ export default {
   color: #ffffff;
   padding: 8px 20px;
   border-radius: 20px;
-  font-size: 16px;
+  font-size: 28px;
   font-weight: 600;
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -860,10 +910,10 @@ export default {
 /* 主内容区域 */
 .main-content {
   flex: 1;
-  padding: 30px 40px;
+  padding: clamp(15px, 3vh, 30px) clamp(20px, 4vw, 40px);
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden; /* 移除滑块，完全禁用溢出滚动 */
   min-height: 0;
 }
 
@@ -872,9 +922,10 @@ export default {
   flex: 1;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
-  gap: 30px;
-  min-height: 600px; /* 确保最小高度 */
+  grid-template-rows: clamp(150px, 35vh, 1fr) clamp(150px, 35vh, 1fr); /* 固定最小高度+视窗比例 */
+  gap: clamp(10px, 2vh, 30px); /* 更紧凑的响应式间距 */
+  height: 100%;
+  max-height: calc(100vh - clamp(60px, 8vh, 100px) - clamp(80px, 10vh, 120px) - 40px); /* 减去头部+底部+边距 */
 }
 
 /* 通用卡片样式 - 毛玻璃效果 */
@@ -898,25 +949,21 @@ export default {
 }
 
 .card-title {
-  font-size: 18px;
+  font-size: clamp(16px, 2.5vh, 24px); /* 更好的响应式缩放 */
   font-weight: 700;
-  color: #ffffff; /* 毛玻璃背景下使用白色 */
-  margin: 0 0 6px 0;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3); /* 添加文字阴影 */
-}
-
-.card-subtitle {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.8); /* 毛玻璃背景下使用白色 */
-  font-weight: 500;
+  color: #ffffff;
+  margin: 0 0 clamp(8px, 1.2vh, 12px) 0;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  text-align: center; /* 确保卡片标题居中 */
 }
 
 .card-content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: auto;
+  overflow: hidden; /* 移除滑块，禁用内容溢出滚动 */
   min-height: 0; /* 允许灵活压缩 */
+  font-size: clamp(10px, 1.2vh, 14px); /* 更小的基础字体 */
 }
 
 /* 左上角：时间曲线卡片 */
@@ -941,24 +988,26 @@ export default {
 }
 
 .status-content {
-  justify-content: center;
-  align-items: center;
-  gap: 25px;
+  justify-content: space-between;
+  align-items: stretch; /* 改为拉伸对齐 */
+  gap: clamp(8px, 1.5vh, 15px);
+  padding: clamp(8px, 1.5vh, 15px);
+  flex-direction: column; /* 垂直布局 */
 }
 
 .status-badge {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 15px;
-  padding: 25px;
-  border-radius: 20px;
+  gap: clamp(4px, 0.8vh, 8px);
+  padding: clamp(8px, 1.5vh, 15px);
+  border-radius: 12px;
   text-align: center;
+  flex-shrink: 0; /* 防止被压缩 */
 }
 
 .badge-icon {
-  color: #ffffff;
-  opacity: 0.9;
+  display: none; /* 直接隐藏SVG图标 */
 }
 
 .badge-text {
@@ -969,16 +1018,18 @@ export default {
 }
 
 .grade {
-  font-size: 28px;
+  font-size: clamp(20px, 4vh, 34px); /* 响应式等级字体 */
   font-weight: 800;
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  text-align: center; /* 等级标题居中 */
 }
 
 .description {
-  font-size: 16px;
+  font-size: clamp(10px, 1.5vh, 16px); /* 响应式描述字体 */
   color: rgba(255, 255, 255, 0.9);
   font-weight: 500;
+  text-align: center; /* 描述居中 */
 }
 
 .level-excellent {
@@ -998,34 +1049,48 @@ export default {
 
 .status-metrics {
   display: flex;
-  flex-direction: row; /* 改为水平排列 */
-  gap: 15px; /* 增加间距 */
+  flex-direction: row; /* 改回水平排列 */
+  gap: clamp(8px, 1.5vh, 15px);
   width: 100%;
+  flex: 1; /* 占用剩余空间 */
 }
 
 .metric-item {
   display: flex;
-  flex-direction: column; /* 内部垂直排列 */
-  align-items: center; /* 居中对齐 */
-  padding: 15px 12px; /* 调整内边距 */
-  background: rgba(255, 255, 255, 0.15); /* 增加背景透明度 */
+  flex-direction: column;
+  align-items: center;
+  justify-content: center; /* 垂直居中 */
+  padding: clamp(8px, 1.5vh, 12px);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 12px;
   backdrop-filter: blur(10px);
-  flex: 1; /* 平均分配宽度 */
+  flex: 1;
   text-align: center;
+  min-height: clamp(60px, 8vh, 80px); /* 确保足够高度用于居中 */
+  /* 内容溢出保护 */
+  overflow: hidden;
+  word-wrap: break-word;
 }
 
 .metric-label {
-  font-size: 12px; /* 略微减小 */
-  color: rgba(255, 255, 255, 0.8); /* 毛玻璃背景下使用白色 */
+  font-size: clamp(12px, 2vh, 18px); /* 更好的响应式字体 */
+  color: rgba(255, 255, 255, 0.8);
   font-weight: 500;
-  margin-bottom: 5px; /* 添加下边距 */
+  margin-bottom: clamp(2px, 0.5vh, 4px);
+  text-align: center; /* 确保标签居中 */
+  line-height: 1.1;
 }
 
 .metric-value {
-  font-size: 16px;
+  font-size: clamp(14px, 2.2vh, 20px); /* 更大的响应式数值字体 */
   font-weight: 700;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); /* 添加文字阴影 */
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  text-align: center; /* 数值居中 */
+  line-height: 1.1;
+  /* 数值溢出保护 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .metric-value.positive {
@@ -1043,24 +1108,24 @@ export default {
 }
 
 .brain-content {
-  justify-content: flex-start; /* 改为顶部对齐 */
+  justify-content: space-between; /* 充分利用空间 */
   align-items: center;
-  gap: 10px; /* 减小间距 */
+  gap: clamp(5px, 1vh, 10px); /* 最小间距 */
+  padding: clamp(5px, 1vh, 10px);
   flex: 1;
-  padding: 0; /* 移除内边距 */
 }
 
 .brain-colorbar-compact {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px; /* 减小间距 */
-  flex-shrink: 0; /* 防止被压缩 */
+  gap: clamp(3px, 0.5vh, 5px); /* 更紧凑的颜色条 */
+  flex-shrink: 0;
 }
 
 .colorbar-gradient-compact {
-  width: 180px; /* 略微减小 */
-  height: 12px; /* 减小高度 */
+  width: clamp(120px, 20vw, 180px); /* 响应式宽度 */
+  height: clamp(8px, 1vh, 12px); /* 更小高度 */
   background: linear-gradient(to right, 
     #313695 0%, #4575b4 20%, #74add1 40%, #abd9e9 50%, 
     #e0f3f8 60%, #ffffbf 70%, #fee090 80%, #fdae61 90%, 
@@ -1072,27 +1137,27 @@ export default {
 .colorbar-labels-compact {
   display: flex;
   justify-content: space-between;
-  width: 180px;
-  font-size: 11px; /* 减小字体 */
+  width: clamp(120px, 20vw, 180px);
+  font-size: clamp(10px, 1.2vh, 14px); /* 更小字体 */
   color: rgba(255, 255, 255, 0.8);
   font-weight: 500;
 }
 
 .brain-heatmap {
-  width: auto; /* 让宽度根据高度和aspect-ratio自动计算 */
-  height: 100%; /* 占满容器高度 */
+  width: auto;
+  height: 100%;
   aspect-ratio: 1; /* 强制保持1:1宽高比 */
-  max-width: 250px; /* 限制最大宽度，对应max-height */
-  max-height: 250px; /* 限制最大高度，确保不会过大 */
-  background: transparent; /* 透明背景 */
+  max-width: min(clamp(120px, 20vh, 200px), 80%); /* 双重限制 */
+  max-height: clamp(120px, 20vh, 200px);
+  background: transparent;
   border-radius: 12px;
-  border: none; /* 移除边框 */
-  min-height: clamp(150px, 15vh, 250px); /* 响应式最小高度 */
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden; /* 确保内容不超出 */
-  flex-shrink: 0; /* 防止被压缩 */
+  overflow: hidden;
+  flex: 1;
+  object-fit: contain; /* 确保图片完整显示 */
 }
 
 /* 右下角：康复建议卡片 */
@@ -1110,58 +1175,80 @@ export default {
   text-align: center;
 }
 
-.advice-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: #ffffff; /* 毛玻璃背景下使用白色 */
-  margin-bottom: 12px;
-  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-
-.advice-description {
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.9); /* 毛玻璃背景下使用白色 */
-  line-height: 1.6;
-  margin-bottom: 20px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.advice-suggestions {
+/* 新康复建议样式 */
+.advice-sections {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: clamp(6px, 1.2vh, 12px);
+  height: 100%;
+  background: rgba(96, 165, 250, 0.05); /* 统一背景 */
+  border-radius: 12px;
+  padding: clamp(8px, 1.5vh, 16px); /* 统一内边距 */
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  overflow: hidden;
 }
 
-.suggestion-item {
+.advice-section {
+  background: transparent; /* 移除独立背景 */
+  border-radius: 0;
+  padding: clamp(6px, 1.2vh, 10px) 0; /* 只保留上下内边距 */
+  border: none;
+  border-bottom: 1px solid rgba(96, 165, 250, 0.1); /* 添加分割线 */
+  flex: 1;
+  min-height: 0;
+}
+
+.advice-section:last-child {
+  border-bottom: none; /* 最后一个不要分割线 */
+}
+
+.section-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: rgba(255, 255, 255, 0.15); /* 增加背景透明度 */
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(10px);
+  margin-bottom: clamp(4px, 0.8vh, 8px);
+  /* 康复建议内标题保持左对齐 */
 }
 
-.suggestion-icon {
-  color: rgba(255, 255, 255, 0.9); /* 改为白色 */
+.section-bullet {
+  width: 6px;
+  height: 6px;
+  background: #3b82f6;
+  border-radius: 50%;
+  margin-right: 8px;
   flex-shrink: 0;
 }
 
-.suggestion-item span {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.9); /* 改为白色 */
-  font-weight: 500;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+.section-label {
+  font-size: clamp(12px, 2.2vh, 20px); /* 更大的响应式标题字体 */
+  font-weight: 600;
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  line-height: 1.2;
+  /* 康复建议内标题保持左对齐，移除居中 */
+}
+
+.section-content {
+  font-size: clamp(10px, 1.8vh, 16px); /* 更大的响应式内容字体 */
+  line-height: 1.4; /* 增加行高提高可读性 */
+  color: rgba(255, 255, 255, 0.9);
+  padding-left: clamp(10px, 2vw, 16px); /* 恢复左内边距 */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  /* 康复建议内容保持左对齐，移除居中 */
+  /* 内容溢出保护 */
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 /* 底部按钮区域 */
 .bottom-actions {
-  padding: 20px 40px 30px;
+  padding: clamp(15px, 2vh, 25px) clamp(20px, 4vw, 40px);
   display: flex;
   justify-content: center;
   background: rgba(255, 255, 255, 0.05);
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  height: clamp(80px, 10vh, 120px); /* 响应式底部高度 */
+  flex-shrink: 0;
 }
 
 .action-buttons {
@@ -1178,7 +1265,7 @@ export default {
   padding: 15px 30px;
   border: none;
   border-radius: 15px;
-  font-size: 16px;
+  font-size: 28px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -1272,6 +1359,59 @@ export default {
 /* 确保底部按钮区域有正确的相对定位 */
 .bottom-actions {
   position: relative;
+}
+
+/* 720p以下的专项布局调整 */
+@media (max-height: 720px) {
+  .assessment-grid {
+    grid-template-rows: minmax(120px, 1fr) minmax(120px, 1fr); /* 更小的最小高度 */
+    gap: clamp(8px, 1.5vh, 20px);
+  }
+  
+  .card-title {
+    font-size: clamp(14px, 2vh, 20px);
+    margin-bottom: clamp(2px, 0.5vh, 6px);
+  }
+  
+  .grade {
+    font-size: clamp(20px, 4vh, 30px); /* 更小的等级字体 */
+  }
+  
+  .description {
+    font-size: clamp(10px, 1.5vh, 14px);
+  }
+}
+
+/* 超小屏幕紧急方案 - 单列布局 */
+@media (max-width: 900px) or (max-height: 600px) {
+  .assessment-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(100px, 1fr));
+    gap: clamp(8px, 1vh, 15px);
+  }
+  
+  .time-curve-card,
+  .assessment-status-card,
+  .brain-heatmap-card,
+  .recovery-advice-card {
+    grid-column: 1;
+  }
+  
+  .time-curve-card {
+    grid-row: 1;
+  }
+  
+  .assessment-status-card {
+    grid-row: 2;
+  }
+  
+  .brain-heatmap-card {
+    grid-row: 3;
+  }
+  
+  .recovery-advice-card {
+    grid-row: 4;
+  }
 }
 
 /* 响应式设计 */

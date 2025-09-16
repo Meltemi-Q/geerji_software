@@ -44,7 +44,7 @@
               type="text" 
               v-model="formData.name" 
               class="form-input"
-              placeholder="请输入患者姓名"
+              placeholder="请输入用户姓名"
               @input="validateName"
             >
             <span v-if="errors.name" class="error-text">{{ errors.name }}</span>
@@ -296,7 +296,7 @@
             <div v-if="uploadStatus.uploading" class="status-message status-loading">
               <div class="status-icon">⏳</div>
               <div class="status-text">
-                <div class="status-title">正在上传患者信息...</div>
+                <div class="status-title">正在上传用户信息...</div>
                 <div class="status-desc">请稍候，正在同步到戈尔基云端服务器</div>
               </div>
             </div>
@@ -305,7 +305,7 @@
               <div class="status-icon">✅</div>
               <div class="status-text">
                 <div class="status-title">上传成功！</div>
-                <div class="status-desc">患者信息已安全保存到云端，即将自动关闭</div>
+                <div class="status-desc">用户信息已安全保存到云端，即将自动关闭</div>
               </div>
             </div>
 
@@ -606,14 +606,14 @@ export default {
       try {
         // 1. 本地保存（立即保存，确保数据不丢失）
         localStorage.setItem('patientInfo', JSON.stringify(data))
-        console.log('[患者信息] 本地保存成功')
+        console.log('[用户信息] 本地保存成功')
 
-        // 2. 云端上传患者档案
-        console.log('[患者信息] 开始上传到戈尔基云端')
+        // 2. 云端上传用户档案
+        console.log('[用户信息] 开始上传到戈尔基云端')
         const uploadResult = await cloudAPI.uploadPatientProfile(data)
 
         if (uploadResult.success) {
-          console.log('[患者信息] 云端上传成功:', uploadResult.patient_id)
+          console.log('[用户信息] 云端上传成功:', uploadResult.patient_id)
           
           uploadStatus.value = {
             uploading: false,
@@ -621,7 +621,7 @@ export default {
             error: null
           }
 
-          // 保存患者ID用于后续会话
+          // 保存用户ID用于后续会话
           const enhancedData = {
             ...data,
             patient_id: uploadResult.patient_id,
@@ -629,7 +629,7 @@ export default {
             sync_timestamp: new Date().toISOString()
           }
 
-          // 更新本地存储包含患者ID
+          // 更新本地存储包含用户ID
           localStorage.setItem('patientInfo', JSON.stringify(enhancedData))
           localStorage.setItem('current_patient_id', uploadResult.patient_id)
 
@@ -644,7 +644,7 @@ export default {
           throw new Error(uploadResult.error || '上传失败')
         }
       } catch (error) {
-        console.error('[患者信息] 云端上传失败:', error)
+        console.error('[用户信息] 云端上传失败:', error)
         
         uploadStatus.value = {
           uploading: false,
@@ -653,7 +653,7 @@ export default {
         }
 
         // 即使云端上传失败，也继续本地流程
-        // 生成本地患者ID用于会话管理
+        // 生成本地用户ID用于会话管理
         const localPatientId = data.patient_id || `PATIENT_${Date.now()}`
         
         // 标记为离线数据，待下次训练时重试
@@ -667,7 +667,7 @@ export default {
 
         localStorage.setItem('patientInfo', JSON.stringify(offlineData))
         localStorage.setItem('current_patient_id', localPatientId)
-        console.warn('[患者信息] 已保存为离线数据，将在下次训练时重试上传')
+        console.warn('[用户信息] 已保存为离线数据，将在下次训练时重试上传')
 
         // 触发保存事件（本地数据）
         emit('save', offlineData)
@@ -770,7 +770,7 @@ export default {
 }
 
 .modal-title {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 600;
   margin: 0;
 }
@@ -815,7 +815,7 @@ export default {
   align-items: center;
   justify-content: center;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 16px;
   transition: all 0.3s;
 }
 
@@ -844,7 +844,7 @@ export default {
 .step-labels {
   display: flex;
   justify-content: space-around;
-  font-size: 12px;
+  font-size: 14px;
   color: #6b7280;
 }
 
@@ -868,7 +868,7 @@ export default {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: 18px;
   font-weight: 600;
   color: #374151;
   margin-bottom: 10px;
@@ -887,7 +887,7 @@ export default {
   padding: 10px 15px;
   border: 2px solid #e5e7eb;
   border-radius: 10px;
-  font-size: 16px;
+  font-size: 18px;
   transition: all 0.3s;
 }
 
@@ -899,7 +899,7 @@ export default {
 
 .error-text {
   color: #ef4444;
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 5px;
   display: block;
 }
@@ -916,7 +916,7 @@ export default {
   padding: 10px;
   border: 2px solid #e5e7eb;
   border-radius: 10px;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   text-align: center;
 }
@@ -926,7 +926,7 @@ export default {
   padding: 10px 15px;
   border: 2px solid #e5e7eb;
   border-radius: 10px;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s;
@@ -998,19 +998,19 @@ input[type="range"]::-webkit-slider-thumb:hover {
 }
 
 .bmi-label {
-  font-size: 14px;
+  font-size: 16px;
   color: #64748b;
   font-weight: 500;
 }
 
 .bmi-value {
-  font-size: 32px;
+  font-size: 36px;
   font-weight: bold;
   color: #1e3c72;
 }
 
 .bmi-status {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 600;
   padding: 5px 15px;
   border-radius: 20px;
@@ -1075,7 +1075,7 @@ input[type="range"]::-webkit-slider-thumb:hover {
   justify-content: space-between;
   padding: 0 10px;
   margin-top: 25px;
-  font-size: 12px;
+  font-size: 14px;
   color: #64748b;
 }
 
@@ -1092,17 +1092,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
   border: 2px solid #e5e7eb;
   border-radius: 10px;
   text-align: center;
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .bp-separator {
-  font-size: 20px;
+  font-size: 22px;
   color: #6b7280;
 }
 
 /* 健康状况卡片 */
 .step-question {
-  font-size: 16px;
+  font-size: 18px;
   color: #374151;
   margin-bottom: 20px;
   text-align: center;

@@ -48,6 +48,7 @@
               <polygon 
                 v-if="overlayPoints"
                 :points="overlayPoints"
+                data-testid="brain-coverage-overlay"
                 fill="rgba(96,165,250,0.6)"
                 stroke="rgba(255,255,255,0.2)"
                 stroke-width="1.75"
@@ -59,15 +60,26 @@
             <!-- ECharts + IDW热力图组件 -->
             <HeatmapReportStyleView
               v-if="useReportHeatmap"
+              data-testid="brain-heatmap-container"
               :hboData="hboData"
               :channelPositions="reportChannelPositions"
               :sixDockTriangleVertices="sixDockTriangleVertices"
               :layoutDimensions="reportLayoutDimensions"
               :alignment="heatmapAlignment"
-              :useSixDockMode="true"
-              :gridSize="200"
-              :gaussianSigma="3.5"
-              :kNeighbors="24"
+              :useSixDockMode="sixDockMaskEnabled"
+              :gridSize="120"
+              :kNeighbors="16"
+              :gaussianSigma="2.0"
+              :valueDomain="{min:-0.05,max:0.05}"
+              colorMap="Spectral"
+              :discreteLevels="9"
+              :showContours="true"
+              :showColorbar="false"
+              :showChannels="false"
+              :overlayEnabled="true"
+              :updateIntervalMs="500"
+              :showControls="false"
+              :showDebug="false"
             />
             
             <!-- 统一使用ECharts热力图渲染 -->
@@ -145,7 +157,6 @@ export default {
     let triangleProcessor = null
     let heatmapCoordinator = null
     // d3Renderer已移除，统一使用ECharts
-    let updateTimer = null
     let resizeCleanup = null
 
     // 覆盖层数据（SVG 多边形）
@@ -154,6 +165,8 @@ export default {
 
     // 新增：ECharts热力图系统配置
     const useReportHeatmap = ref(true)
+    // 是否启用6dock三角形掩膜（用于SDK区域热力图形状约束）
+    const sixDockMaskEnabled = ref(true)
     const reportChannelPositions = ref([])
     const reportLayoutDimensions = ref({ x: 188.72, y: 110.29 })
     
@@ -177,7 +190,6 @@ export default {
     
     // 12-node覆盖区域状态
     let nodeLayoutData = null
-    let coverageAreaSvg = null
     const triangleDimensions = ref({ x: 188.72346922981956, y: 110.29199999999999 }) // mm
     
     // 使用共享逻辑
@@ -193,17 +205,14 @@ export default {
     // 热力图容器样式（响应式）
     const heatmapContainerStyle = computed(() => {
       if (!heatmapCoordinator || !brainImageRef.value) {
-        console.log('[BrainModeView] 样式计算跳过: coordinator=', !!heatmapCoordinator, 'brainImage=', !!brainImageRef.value)
         return {}
       }
       
       try {
-        console.log('[BrainModeView] 开始计算SVG样式...')
         const style = heatmapCoordinator.getSVGStyle(brainImageRef.value, brainDisplayRef.value)
-        console.log('[BrainModeView] SVG样式计算完成:', style)
         return style
       } catch (error) {
-        console.warn('[BrainModeView] 样式计算失败:', error)
+        console.error('[BrainModeView] 样式计算失败:', error)
         return {}
       }
     })
@@ -224,12 +233,6 @@ export default {
         // 热力图使用的是layout.json，所以我们也要使用相同的尺寸
         triangleDimensions.value = nodeLayoutData.dimensions.dimensions_2d
         
-        console.log('[BrainModeView] 12-node完整布局数据加载成功:', {
-          configFile: 'renumbered_full_layout.json',
-          dimensions: triangleDimensions.value,
-          docksCount: nodeLayoutData.docks?.length || 0,
-          totalOptodes: nodeLayoutData.docks?.reduce((sum, dock) => sum + (dock.optodes?.length || 0), 0)
-        })
         return nodeLayoutData
       } catch (error) {
         console.error('[BrainModeView] 12-node布局数据加载失败:', error)
@@ -331,6 +334,87 @@ export default {
     }
     
     /**
+     * 创建12-node覆盖区域SVG多边形
+     */
+    function createCoverageAreaSVG(pixelPoints, containerBounds) {
+      if (!coverageAreaRef.value || pixelPoints.length < 3) return
+      
+      // 清除现有的SVG
+      coverageAreaRef.value.innerHTML = ''
+      
+      // 创建SVG元素
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('width', containerBounds.width)
+      svg.setAttribute('height', containerBounds.height)
+      svg.style.position = 'absolute'
+      svg.style.top = '0'
+      svg.style.left = '0'
+      svg.style.pointerEvents = 'none'
+      svg.style.zIndex = '2' // 位于大脑图片之上，热力图之下
+      
+      // 创建多边形路径
+      const pathData = pixelPoints.map((point, index) => {
+        return `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+      }).join(' ') + ' Z'
+      
+      // 创建path元素
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', pathData)
+      path.style.fill = 'rgba(255,200,0,0.2)' // 金黄色半透明填充，更醒目
+      path.style.stroke = 'rgba(255,150,0,0.9)' // 橙色描边，高对比度
+      path.style.strokeWidth = '3' // 加粗描边
+      path.style.strokeDasharray = '10,5' // 虚线样式，更容易识别
+      
+      svg.appendChild(path)
+      coverageAreaRef.value.appendChild(svg)
+      
+      console.log('[BrainModeView] 12-node覆盖区域SVG创建完成:', {
+        containerSize: containerBounds,
+        polygonPoints: pixelPoints.length,
+        pathData: pathData.substring(0, 100) + '...'
+      })
+    }
+    
+    /**
+     * 更新12-node覆盖区域 (使用12个dock的实际位置形成倒梯形)
+     */
+    async function updateCoverageArea() {
+      if (!brainImageRef.value || !heatmapCoordinator || !nodeLayoutData) return
+      
+      try {
+        console.log('[BrainModeView] 开始更新12-node覆盖区域（倒梯形形状）...')
+        
+        // 1. 获取容器边界 (与热力图完全相同)
+        const imageBounds = brainImageRef.value.getBoundingClientRect()
+        const containerBounds = heatmapCoordinator.calculateContainerBounds(imageBounds)
+        
+        // 2. 提取12-node dock中心点 (真实物理坐标)
+        const dockCenters = extractNodeBoundaryCoordinates(nodeLayoutData)
+        console.log('[BrainModeView] 提取到12-node dock中心:', dockCenters.length)
+        
+        // 3. 计算凸包形成倒梯形边界
+        const convexHull = calculateConvexHull(dockCenters)
+        const expandedPoints = expandPolygon(convexHull, 3) // 外扩3mm
+        
+        // 4. 坐标转换：Triangle 2D → 像素坐标 (使用热力图的相同算法)
+        const pixelPoints = triangleToPixelCoordinates(expandedPoints, containerBounds)
+        
+        // 5. 创建SVG多边形 (倒梯形覆盖区域)
+        createCoverageAreaSVG(pixelPoints, containerBounds)
+        
+        console.log('[BrainModeView] ✅ 12-node倒梯形覆盖区域创建成功!', {
+          形状: '倒梯形',
+          dock数量: dockCenters.length,
+          凸包点数: convexHull.length,
+          容器尺寸: `${containerBounds.width}×${containerBounds.height}`
+        })
+        
+      } catch (error) {
+        console.error('[BrainModeView] ❌ 12-node覆盖区域更新失败:', error)
+      }
+    }
+    
+    /**
      * 外扩多边形边界 (3mm)
      */
     function expandPolygon(points, expandDistance = 3) {
@@ -412,148 +496,7 @@ export default {
       return pixelPoints
     }
     
-    /**
-     * 创建12-node覆盖区域SVG多边形
-     */
-    function createCoverageAreaSVG(pixelPoints, containerBounds) {
-      if (!coverageAreaRef.value || pixelPoints.length < 3) return
-      
-      // 清除现有的SVG
-      coverageAreaRef.value.innerHTML = ''
-      
-      // 创建SVG元素
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      svg.setAttribute('width', containerBounds.width)
-      svg.setAttribute('height', containerBounds.height)
-      svg.style.position = 'absolute'
-      svg.style.top = '0'
-      svg.style.left = '0'
-      svg.style.pointerEvents = 'none'
-      svg.style.zIndex = '2' // 位于大脑图片之上，热力图之下
-      
-      // 创建多边形路径
-      const pathData = pixelPoints.map((point, index) => {
-        return `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-      }).join(' ') + ' Z'
-      
-      // 创建path元素
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-      path.setAttribute('d', pathData)
-      path.style.fill = 'rgba(255,200,0,0.2)' // 金黄色半透明填充，更醒目
-      path.style.stroke = 'rgba(255,150,0,0.9)' // 橙色描边，高对比度
-      path.style.strokeWidth = '3' // 加粗描边
-      path.style.strokeDasharray = '10,5' // 虚线样式，更容易识别
-      
-      svg.appendChild(path)
-      coverageAreaRef.value.appendChild(svg)
-      
-      coverageAreaSvg = svg
-      
-      console.log('[BrainModeView] 12-node覆盖区域SVG创建完成:', {
-        containerSize: containerBounds,
-        polygonPoints: pixelPoints.length,
-        pathData: pathData.substring(0, 100) + '...'
-      })
-    }
     
-    /**
-     * 更新12-node覆盖区域 (使用12个dock的实际位置形成倒梯形)
-     */
-    async function updateCoverageArea() {
-      if (!brainImageRef.value || !heatmapCoordinator || !nodeLayoutData) return
-      
-      try {
-        console.log('[BrainModeView] 开始更新12-node覆盖区域（倒梯形形状）...')
-        
-        // 1. 获取容器边界 (与热力图完全相同)
-        const containerBounds = heatmapCoordinator.calculateHeatmapBounds(
-          brainImageRef.value, 
-          brainDisplayRef.value
-        )
-        if (!containerBounds) {
-          console.warn('[BrainModeView] 无法获取容器边界')
-          return
-        }
-        
-        // 2. 从12个dock中提取每个dock的中心位置
-        const dockCenters = []
-        if (nodeLayoutData && nodeLayoutData.docks) {
-          nodeLayoutData.docks.forEach(dock => {
-            if (dock.optodes && dock.optodes.length > 0) {
-              // 计算每个dock的中心位置
-              let sumX = 0, sumY = 0
-              let count = 0
-              
-              dock.optodes.forEach(optode => {
-                if (optode.coordinates_2d) {
-                  sumX += optode.coordinates_2d.x
-                  sumY += optode.coordinates_2d.y
-                  count++
-                }
-              })
-              
-              if (count > 0) {
-                dockCenters.push({
-                  x: sumX / count,
-                  y: sumY / count,
-                  dock_id: dock.dock_id
-                })
-              }
-            }
-          })
-        }
-        
-        console.log('[BrainModeView] 12个dock中心位置计算完成:', {
-          dock数量: dockCenters.length,
-          dock_ids: dockCenters.map(d => d.dock_id),
-          样例坐标: dockCenters.slice(0, 3).map(d => ({
-            dock: d.dock_id,
-            x: d.x.toFixed(2), 
-            y: d.y.toFixed(2)
-          }))
-        })
-        
-        // 3. 根据12个dock的实际布局，直接定义倒梯形的关键点
-        // 12-node设备实际布局是3行4列，形成倒梯形
-        if (dockCenters.length !== 12) {
-          console.warn('[BrainModeView] dock数量不是12个:', dockCenters.length)
-        }
-        
-        // 4. 使用所有dock中心点计算凸包（会自然形成倒梯形）
-        const convexHull = calculateConvexHull(dockCenters)
-        console.log('[BrainModeView] 12-node凸包计算完成（倒梯形）:', {
-          dock中心点数: dockCenters.length,
-          凸包点数: convexHull.length,
-          形状: '倒梯形'
-        })
-        
-        // 5. 外扩形成明显的包边区域 (8mm外扩，让倒梯形更明显)
-        const expandedHull = expandPolygon(convexHull, 8)
-        
-        // 6. 转换为像素坐标
-        const pixelPoints = triangleToPixelCoordinates(expandedHull, containerBounds)
-        console.log('[BrainModeView] 12-node倒梯形坐标转换完成:', {
-          Triangle坐标范围: {
-            x: [Math.min(...expandedHull.map(p => p.x)), Math.max(...expandedHull.map(p => p.x))],
-            y: [Math.min(...expandedHull.map(p => p.y)), Math.max(...expandedHull.map(p => p.y))]
-          },
-          像素点数: pixelPoints.length
-        })
-        
-        // 7. 创建倒梯形SVG覆盖区域
-        createCoverageAreaSVG(pixelPoints, containerBounds)
-        
-        console.log('[BrainModeView] ✅ 12-node倒梯形覆盖区域创建成功!', {
-          形状: '倒梯形',
-          dock数量: dockCenters.length,
-          凸包点数: convexHull.length,
-          容器尺寸: `${containerBounds.width}×${containerBounds.height}`
-        })
-        
-      } catch (error) {
-        console.error('[BrainModeView] ❌ 12-node覆盖区域更新失败:', error)
-      }
-    }
     
 
     /**
@@ -572,15 +515,21 @@ export default {
         triangleProcessor = new TriangleDataProcessor()
         const channelData = await triangleProcessor.processTriangleData()
         
-        console.log('[BrainModeView] Triangle数据处理完成:', {
-          sources: channelData.sources.length,
-          detectors: channelData.detectors.length,
-          channels: channelData.totalChannels
-        })
         
         // 设置ECharts热力图需要的通道位置数据
         reportChannelPositions.value = channelData.channelPositions || []
-        console.log('[BrainModeView] 通道位置数据已设置:', reportChannelPositions.value.length, '个通道')
+        if (!reportChannelPositions.value.length) {
+          console.warn('[BrainModeView] ⚠️ Triangle通道位置为空，使用默认6-dock布局')
+          // 使用默认的6-dock三角形布局作为fallback
+          reportChannelPositions.value = [
+            { x: 94.36, y: 86.41, intensity: 0.02 },  // dock_3
+            { x: 59.36, y: 25.81, intensity: 0.01 },  // dock_10
+            { x: 129.36, y: 25.81, intensity: 0.015 }, // dock_12
+            { x: 80.0, y: 55.0, intensity: 0.025 },   // center-left
+            { x: 108.0, y: 55.0, intensity: 0.02 },   // center-right
+            { x: 94.36, y: 40.0, intensity: 0.018 }   // center-top
+          ]
+        }
         
         // 2. 初始化坐标协调器
         heatmapCoordinator = new HeatmapCoordinator()
@@ -590,6 +539,9 @@ export default {
         if (heatmapContainerRef.value) {
           // 初始化覆盖层
           updateCoverageOverlay({ width: 400, height: 300 })
+          
+          // 初始化12-node覆盖区域
+          await updateCoverageArea()
         }
         
         // 4. 设置响应式更新
@@ -598,24 +550,20 @@ export default {
         // 5. 初始化完成后立即计算位置并强制更新样式
         nextTick(() => {
           if (brainImageRef.value) {
-            console.log('[BrainModeView] coordinator初始化完成，重新计算位置')
             const bounds = heatmapCoordinator.calculateHeatmapBounds(brainImageRef.value, brainDisplayRef.value)
             if (bounds) {
               updateHeatmapSize(bounds)
-              // 强制触发样式更新
               forceStyleUpdate()
             }
           }
         })
-        
-        // 6. 开始更新循环
-        startUpdateLoop()
         
         isLoading.value = false
         console.log('[BrainModeView] 热力图系统初始化完成')
         
       } catch (error) {
         console.error('[BrainModeView] 热力图系统初始化失败:', error)
+        // 显示错误遮罩，避免无声失败
         hasError.value = true
         errorMessage.value = `初始化失败: ${error.message}`
         isLoading.value = false
@@ -635,38 +583,12 @@ export default {
       resizeCleanup = heatmapCoordinator.setupResponsiveUpdates(
         brainImageRef.value,
         (bounds) => {
-          console.log('[BrainModeView] 响应式更新:', bounds)
           updateHeatmapSize(bounds)
-          // 立即同步位置
-          syncHeatmapPosition()
-          // 同步更新12-node覆盖区域
-          updateCoverageArea()
+          // 在窗口尺寸变化时，按需同步容器位置和尺寸
+          forceStyleUpdate()
         },
         100 // 减少防抖时间以获得更快的响应
       )
-      
-      // 添加额外的实时同步机制
-      const syncInterval = setInterval(() => {
-        syncHeatmapPosition()
-        // 每500ms也同步覆盖区域位置
-        if (nodeLayoutData) updateCoverageArea()
-      }, 500) // 每500ms检查一次位置
-      
-      // 监听窗口滚动事件（如果有）
-      const handleScroll = () => {
-        syncHeatmapPosition()
-        // 滚动时也同步覆盖区域
-        if (nodeLayoutData) updateCoverageArea()
-      }
-      window.addEventListener('scroll', handleScroll, { passive: true })
-      
-      // 增强清理函数
-      const originalCleanup = resizeCleanup
-      resizeCleanup = () => {
-        clearInterval(syncInterval)
-        window.removeEventListener('scroll', handleScroll)
-        if (originalCleanup) originalCleanup()
-      }
     }
     
     /**
@@ -678,8 +600,6 @@ export default {
       try {
         // 同步更新覆盖层尺寸与多边形
         updateCoverageOverlay(bounds)
-        
-        console.log('[BrainModeView] 热力图尺寸已更新:', bounds)
       } catch (error) {
         console.error('[BrainModeView] 热力图尺寸更新失败:', error)
       }
@@ -752,51 +672,19 @@ export default {
       }
     }
     
-    /**
-     * 开始更新循环
-     */
-    function startUpdateLoop() {
-      updateTimer = setInterval(() => {
-        updateHeatmapRender()
-      }, 500) // 每500ms更新一次
-    }
-    
-    /**
-     * 停止更新循环
-     */
-    function stopUpdateLoop() {
-      if (updateTimer) {
-        clearInterval(updateTimer)
-        updateTimer = null
-      }
-    }
+    // 移除定时渲染循环，由子组件根据 hboData 变化自行渲染
     
     /**
      * 大脑图片加载完成事件
      */
     function onBrainImageLoad() {
-      console.log('[BrainModeView] 大脑图片加载完成')
-      const brainRect = brainImageRef.value?.getBoundingClientRect()
-      const containerRect = brainDisplayRef.value?.getBoundingClientRect()
-      console.log('[BrainModeView] 大脑图片尺寸:', {
-        left: brainRect?.left, top: brainRect?.top,
-        width: brainRect?.width, height: brainRect?.height
-      })
-      console.log('[BrainModeView] 容器尺寸:', {
-        left: containerRect?.left, top: containerRect?.top,  
-        width: containerRect?.width, height: containerRect?.height
-      })
       
-      // 图片加载完成后更新热力图尺寸和覆盖区域
+      // 图片加载完成后更新热力图尺寸
       nextTick(() => {
         if (heatmapCoordinator && brainImageRef.value) {
-          console.log('[BrainModeView] 开始计算热力图边界...')
           const bounds = heatmapCoordinator.calculateHeatmapBounds(brainImageRef.value, brainDisplayRef.value)
-          console.log('[BrainModeView] 计算得到的边界:', bounds)
           if (bounds) {
             updateHeatmapSize(bounds)
-            // 同时更新12-node覆盖区域
-            updateCoverageArea()
           }
         }
       })
@@ -806,29 +694,19 @@ export default {
      * 强制触发样式更新 - 参考demo.html的精确定位算法
      */
     function forceStyleUpdate() {
-      console.log('[BrainModeView] 强制触发样式更新')
       if (heatmapContainerRef.value && heatmapCoordinator && brainImageRef.value) {
         const style = heatmapCoordinator.getSVGStyle(brainImageRef.value, brainDisplayRef.value)
-        console.log('[BrainModeView] 直接应用样式:', style)
         
-        // 直接应用样式到DOM元素 - 完全复制demo.html的定位逻辑
+        // 直接应用样式到DOM元素
         Object.entries(style).forEach(([key, value]) => {
           heatmapContainerRef.value.style[key] = value
         })
         
-        // 强制重新计算并应用位置，确保与demo.html一致
+        // 强制重新计算并应用位置
         nextTick(() => {
           const updatedStyle = heatmapCoordinator.getSVGStyle(brainImageRef.value, brainDisplayRef.value)
           Object.entries(updatedStyle).forEach(([key, value]) => {
             heatmapContainerRef.value.style[key] = value
-          })
-          
-          console.log('[BrainModeView] 二次位置校正完成，最终样式:', {
-            left: heatmapContainerRef.value.style.left,
-            top: heatmapContainerRef.value.style.top,
-            width: heatmapContainerRef.value.style.width,
-            height: heatmapContainerRef.value.style.height,
-            opacity: heatmapContainerRef.value.style.opacity
           })
         })
       }
@@ -919,8 +797,6 @@ export default {
     function cleanup() {
       console.log('[BrainModeView] 开始清理资源...')
       
-      stopUpdateLoop()
-      
       if (resizeCleanup) {
         resizeCleanup()
         resizeCleanup = null
@@ -932,48 +808,91 @@ export default {
       heatmapCoordinator = null
     }
     
-    // 监听数据变化
-    watch(() => props.currentValues, () => {
-      updateHeatmapRender()
-    }, { deep: true })
+    // 🚀 Phase 2优化：移除currentValues热力图触发，消除双重更新冲突
+    // 原监听器已移除，HeatmapReportStyleView将直接监听hboData进行渲染
+    // watch(() => props.currentValues, () => {
+    //   updateHeatmapRender()
+    // }, { deep: true })
     
-    // 监听HbO数据变化
+    // 监听HbO数据变化 - 只负责业务逻辑处理
     watch(() => props.hboData, (newHboData) => {
-      console.log('[BrainModeView] HbO数据更新，触发热力图重绘')
-      
-      // 收集血氧数据到会话管理器
-      if (newHboData && Array.isArray(newHboData) && newHboData.length > 0) {
+      // 仅在会话激活后才上传云端，避免“未找到会话ID”错误
+      const status = sessionManager.getSessionStatus?.() || { active: false }
+      const sessionActive = !!status.active
+
+      // 收集血氧数据到会话管理器（仅会话激活 且 cloud_mode=realtime 时）
+      const cloudMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cloud_mode')) || 'disabled'
+      if (sessionActive && cloudMode === 'realtime' && newHboData && Array.isArray(newHboData) && newHboData.length > 0) {
         try {
-          // 计算平均值或使用第一个有效值
           const validValues = newHboData.filter(val => !isNaN(val) && isFinite(val))
           if (validValues.length > 0) {
-            // 可以传递单个平均值或整个数组
             const avgHbo = validValues.reduce((sum, val) => sum + val, 0) / validValues.length
-            
-            // 添加数据点到会话管理器
             sessionManager.addHBODataPoint(avgHbo, {
               timestamp: Date.now(),
               channel_count: newHboData.length,
               valid_ratio: validValues.length / newHboData.length,
-              quality: validValues.length / newHboData.length // 简单的质量评分
+              quality: validValues.length / newHboData.length
             })
-            
-            console.log(`[BrainModeView] 已收集血氧数据: 平均值=${avgHbo.toFixed(3)}, 有效通道=${validValues.length}/${newHboData.length}`)
           }
         } catch (error) {
-          console.error('[BrainModeView] 血氧数据收集失败:', error)
+          console.error('[BrainModeView] 血氧数据上传失败:', error)
         }
       }
-      
-      updateHeatmapRender()
+
+      // 统计与调试（不依赖会话）
+      if (newHboData && Array.isArray(newHboData) && newHboData.length > 0) {
+        const processed = newHboData
+          .map(v => Array.isArray(v) ? Number(v?.[0]) : Number(v))
+          .filter(v => Number.isFinite(v))
+        if (processed.length) updateBrainStats(processed)
+      }
+      // 渲染由子组件负责
     }, { deep: true })
     
     // 组件挂载
     onMounted(async () => {
       console.log('[BrainModeView] 组件已挂载，开始初始化...')
-      
-      // 启动训练会话
+      // 读取URL参数，支持通过 ?sixDockMask=1 启用6dock三角形mask（便于截图对比）
       try {
+        const parseParams = () => {
+          const params = new URLSearchParams(window.location.search)
+          if (params.has('sixDockMask')) return params
+          // 兼容 #training?sixDockMask=1 的写法
+          const hash = window.location.hash || ''
+          const queryIndex = hash.indexOf('?')
+          if (queryIndex !== -1) {
+            return new URLSearchParams(hash.slice(queryIndex + 1))
+          }
+          return params
+        }
+        const qs = parseParams()
+        const maskFlag = qs.get('sixDockMask')
+        // 🔧 修复：只有当明确指定参数时才覆盖默认值
+        if (maskFlag !== null) {
+          sixDockMaskEnabled.value = maskFlag === '1' || maskFlag === 'true'
+          console.log('[BrainModeView] sixDockMaskEnabled 从URL参数设置为:', sixDockMaskEnabled.value)
+        } else {
+          console.log('[BrainModeView] sixDockMaskEnabled 使用默认值:', sixDockMaskEnabled.value)
+        }
+      } catch (e) {
+        console.warn('[BrainModeView] 解析 sixDockMask 参数失败:', e)
+      }
+      
+      // 🚀 重要修复：将热力图系统初始化提前，避免被会话管理阻塞
+      console.log('🚀 [BrainModeView] 准备初始化热力图系统...')
+      try {
+        await nextTick()
+        console.log('🚀 [BrainModeView] nextTick完成，开始调用initializeHeatmapSystem...')
+        await initializeHeatmapSystem()
+        console.log('✅ [BrainModeView] initializeHeatmapSystem执行完成')
+      } catch (error) {
+        console.error('❌ [BrainModeView] initializeHeatmapSystem执行失败:', error)
+        console.error('❌ [BrainModeView] 错误堆栈:', error.stack)
+      }
+      
+      // 启动训练会话（移到最后，避免阻塞）
+      try {
+        console.log('🔄 [BrainModeView] 开始启动训练会话...')
         const sessionResult = await sessionManager.startSession('brain', {
           mode_details: {
             heatmap_enabled: true,
@@ -983,15 +902,13 @@ export default {
         })
         
         if (sessionResult.success) {
-          console.log(`[BrainModeView] 训练会话已启动: ${sessionResult.session_id}`)
+          console.log(`✅ [BrainModeView] 训练会话已启动: ${sessionResult.session_id}`)
         } else {
-          console.warn('[BrainModeView] 会话启动失败，继续本地操作:', sessionResult.error)
+          console.warn('⚠️ [BrainModeView] 会话启动失败，继续本地操作:', sessionResult.error)
         }
       } catch (error) {
-        console.error('[BrainModeView] 会话启动异常:', error)
+        console.error('❌ [BrainModeView] 会话启动异常:', error)
       }
-      await nextTick()
-      await initializeHeatmapSystem()
     })
     
     // 组件卸载
@@ -1048,6 +965,7 @@ export default {
       showDebugInfo,
       debugInfo,
       useReportHeatmap,
+      sixDockMaskEnabled,
       reportChannelPositions,
       reportLayoutDimensions,
       sixDockTriangleVertices,
@@ -1107,7 +1025,7 @@ export default {
 }
 
 .brain-colorbar-label {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 700;
   color: #ffffff;
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -1231,7 +1149,7 @@ export default {
 }
 
 .error-icon {
-  font-size: 48px;
+  font-size: 52px;
   margin-bottom: 15px;
 }
 
@@ -1247,7 +1165,7 @@ export default {
   max-width: 400px;
   max-height: 300px;
   overflow: auto;
-  font-size: 12px;
+  font-size: 14px;
   z-index: 100;
 }
 

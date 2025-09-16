@@ -4,7 +4,7 @@
     <div class="top-header">
       <div class="system-branding">
         <span class="golgi-text-header">Golgi</span>
-        <span class="system-subtitle">近红外脑氧监测系统</span>
+        <span class="system-subtitle">脑机交互智能康复训练系统</span>
       </div>
       <!-- 患者信息显示在右上角 -->
       <div class="patient-info-header">
@@ -152,7 +152,7 @@
             </div>
             <div class="status-indicator-large" :class="kangzhuxiaStatus.connected ? 'connected' : 'disconnected'">
               <div class="status-dot"></div>
-              <span class="status-text-large">康助侠 {{ getKangzhuxiaStatusText() }}</span>
+              <span class="status-text-large">康复器械 {{ getKangzhuxiaStatusText() }}</span>
             </div>
           </div>
           
@@ -190,7 +190,7 @@
             <span>结束训练</span>
           </button>
           
-          <!-- 康助侠设备控制 -->
+          <!-- 康复器械设备控制 -->
           <button 
             v-if="!kangzhuxiaStatus.connected"
             class="large-control-btn connect-btn"
@@ -200,7 +200,7 @@
               <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
               <circle cx="16" cy="14" r="3" fill="currentColor"/>
             </svg>
-            <span>连接康助侠</span>
+            <span>连接康复器械</span>
           </button>
           
           <button 
@@ -212,7 +212,7 @@
               <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
               <line x1="10" y1="10" x2="22" y2="22" stroke="currentColor" stroke-width="3"/>
             </svg>
-            <span>断开康助侠</span>
+            <span>断开康复器械</span>
           </button>
           
           <!-- 紧急停止按钮 -->
@@ -346,6 +346,10 @@ export default {
       curveChart = echarts.init(curveChartRef.value)
       
       const option = {
+        // 关闭更新动画，避免形变感，提升“平移”观感
+        animation: false,
+        animationDurationUpdate: 0,
+        animationEasingUpdate: 'linear',
         title: {
           text: '血氧数据实时曲线',
           left: 'center',
@@ -501,8 +505,9 @@ export default {
         const hboSeriesData = curveDataPoints.value.hbo.map(point => [point.time, point.value])
         const hbrSeriesData = curveDataPoints.value.hbr.map(point => [point.time, point.value])
         
-        // 更新图表数据
+        // 更新图表数据 + 固定时间窗口，营造流畅“平移”效果
         curveChart.setOption({
+          xAxis: { min: cutoffTime, max: now },
           series: [
             { data: hboSeriesData },
             { data: hbrSeriesData }

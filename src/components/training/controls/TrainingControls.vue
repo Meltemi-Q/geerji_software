@@ -52,7 +52,7 @@
             <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
             <circle cx="16" cy="14" r="3" fill="currentColor"/>
           </svg>
-          <span>连接康助侠</span>
+          <span>连接康复器械</span>
         </button>
         
         <button 
@@ -64,7 +64,7 @@
             <path d="M4 20V10L16 4l12 6V20l-12 6L4 20z" fill="none" stroke="currentColor" stroke-width="2"/>
             <line x1="10" y1="10" x2="22" y2="22" stroke="currentColor" stroke-width="3"/>
           </svg>
-          <span>断开康助侠</span>
+          <span>断开康复器械</span>
         </button>
         
         <!-- 紧急停止按钮 -->
@@ -127,7 +127,7 @@ export default {
 }
 
 .controls-title {
-  font-size: 20px;
+  font-size: 30px;
   font-weight: 700;
   color: #ffffff;
   text-align: center;
@@ -159,7 +159,7 @@ export default {
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-radius: 12px;
   color: #ffffff;
-  font-size: clamp(13px, 1.5vh, 18px);
+  font-size: clamp(15px, 1.5vh, 30px);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;
@@ -207,7 +207,7 @@ export default {
 .large-emergency-btn {
   background: rgba(231, 76, 60, 0.2);
   border-color: rgba(231, 76, 60, 0.5);
-  font-size: clamp(12px, 1.4vh, 16px);
+  font-size: clamp(14px, 1.4vh, 28px);
   font-weight: 700;
   min-height: clamp(50px, 7vh, 90px);
   gap: clamp(3px, 0.8vh, 10px);

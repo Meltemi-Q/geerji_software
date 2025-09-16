@@ -28,10 +28,6 @@
       <div>实例状态: {{ isEChartsReady ? '已就绪' : '未就绪' }}</div>
     </div>
 
-    <!-- 覆盖层信息 -->
-    <div v-if="overlayEnabled && overlayInfo" class="overlay-info">
-      <span>覆盖区域: {{ overlayInfo.nodeCount }}个节点</span>
-    </div>
   </div>
 </template>
 
@@ -130,7 +126,17 @@ export default {
     // 状态标志
     let isEChartsReady = false
     let isUpdating = false
-    let updateRequestId = null
+    // 更新节流控制
+    const MIN_UPDATE_INTERVAL_MS = 800
+    let lastUpdateAt = 0
+    let updateDebounceTimer = null
+    let pendingUpdate = false
+
+    // 🚀 固定结构预计算变量 - 实现用户理念："第一帧设定mask，后续只计算数值"
+    let fixedGridInfo = null
+    let fixedInterpolator = null
+    let precomputedNeighbors = null
+    let isStructureInitialized = false
 
 
     // 当前通道数据长度
@@ -175,82 +181,142 @@ export default {
       })
     }
 
-    // 基于alignment参数的精确位置计算（移植demo.html算法）
-    function calculateHeatmapPosition() {
-      if (!chartContainer.value) return null
-      
-      // 获取父容器和大脑图片的引用
-      const container = chartContainer.value.parentElement
-      if (!container) return null
-      
-      // 尝试找到大脑图片元素
-      const brainImage = container.parentElement?.querySelector('img') ||
-                        document.querySelector('.brain-background-image') ||
-                        document.querySelector('img[alt*="大脑"]')
-      
-      if (!brainImage) {
-        console.warn('[热力图对齐] 未找到大脑图片元素')
-        return null
-      }
-      
-      const brainRect = brainImage.getBoundingClientRect()
-      const containerRect = container.getBoundingClientRect()
-      
-      console.log('[热力图对齐] DOM Rects - Brain:', brainRect, 'Container:', containerRect)
-      console.log('[热力图对齐] 使用alignment配置:', props.alignment)
-      
-      // 使用demo.html的精确算法
-      const heatmapWidth = brainRect.width * props.alignment.scale.width
-      const heatmapHeight = brainRect.height * props.alignment.scale.height
-      
-      const left = (brainRect.left - containerRect.left) + 
-                   (brainRect.width * props.alignment.position.x) - 
-                   (heatmapWidth / 2)
-      const top = (brainRect.top - containerRect.top) + 
-                  (brainRect.height * props.alignment.position.y) - 
-                  (heatmapHeight / 2)
+    // 🚀 SDK数据标准化函数 - 严格按照 HEATMAP_INSTANT_REFRESH_STORY.md
+    function normalizeHboData(raw, channelPositions) {
+      const n = channelPositions?.length || 0
+      if (!raw) return new Array(n).fill(0)
 
-      console.log(`[热力图对齐] 计算结果 - Left:${left.toFixed(1)}, Top:${top.toFixed(1)}, Width:${heatmapWidth.toFixed(1)}, Height:${heatmapHeight.toFixed(1)}`)
-      
-      return {
-        left: Math.round(left),
-        top: Math.round(top),
-        width: Math.round(heatmapWidth),
-        height: Math.round(heatmapHeight),
-        opacity: props.alignment.opacity,
-        transform: `rotate(${props.alignment.rotation}deg)`
-      }
-    }
-    
-    // 应用位置样式到chartContainer
-    function applyHeatmapAlignment() {
-      const position = calculateHeatmapPosition()
-      if (!position || !chartContainer.value) return
-      
-      // 应用样式
-      chartContainer.value.style.position = 'absolute'
-      chartContainer.value.style.left = position.left + 'px'
-      chartContainer.value.style.top = position.top + 'px'
-      chartContainer.value.style.width = position.width + 'px'
-      chartContainer.value.style.height = position.height + 'px'
-      chartContainer.value.style.opacity = position.opacity
-      chartContainer.value.style.transform = position.transform
-      chartContainer.value.style.pointerEvents = 'none'
-      chartContainer.value.style.zIndex = '3'
-      
-      console.log('[热力图对齐] 样式已应用:', {
-        position: 'absolute',
-        ...position
-      })
-      
-      // 如果ECharts图表已初始化，重新设置尺寸
-      if (mainChart && !mainChart.isDisposed()) {
-        mainChart.resize({
-          width: position.width,
-          height: position.height
+      if (Array.isArray(raw)) {
+        return Array.from({ length: n }, (_, i) => {
+          const v = raw[i]
+          const x = Array.isArray(v) ? Number(v?.[0]) : Number(v)
+          return Number.isFinite(x) ? x : 0
         })
       }
+
+      const map = raw instanceof Map ? raw : new Map(Object.entries(raw || {}))
+      return Array.from({ length: n }, (_, i) => {
+        const id = channelPositions[i]?.channelId ?? i
+        const v = map.get?.(String(id)) ?? map.get?.(id) ?? raw?.[id]
+        const x = Array.isArray(v) ? Number(v?.[0]) : Number(v)
+        return Number.isFinite(x) ? x : 0
+      })
     }
+
+    // 🚀 初始化固定热力图结构 - 一次性预计算网格、mask、邻居关系
+    function initializeFixedHeatmapStructure() {
+      // 如果已经初始化，直接返回成功
+      if (isStructureInitialized) {
+        return true
+      }
+      
+      // 如果没有通道位置数据，返回失败
+      if (!props.channelPositions || props.channelPositions.length === 0) {
+        console.warn(`[固定结构] 初始化失败 - 通道位置数据无效:`, {
+          channelPositions: props.channelPositions,
+          length: props.channelPositions?.length
+        })
+        return false
+      }
+
+      // console.log('[固定结构] 开始初始化热力图固定结构...')
+
+      try {
+        // 创建通道模板（固定位置，数值设为0）
+        const channelTemplate = props.channelPositions.map((pos, index) => ({
+          position: pos.position,
+          value: 0, // 模板数值，后续只更新这个字段
+          channelId: pos.channelId || index
+        }))
+
+        // 一次性创建固定网格信息（包含三角形mask）
+        fixedGridInfo = GridBuilder.createGridInfo(channelTemplate, {
+          gridSize: props.gridSize,
+          layoutDimensions: props.layoutDimensions,
+          padding: 5,
+          useSixDockMode: props.useSixDockMode,
+          sixDockTriangleVertices: props.sixDockTriangleVertices
+        })
+
+        // 创建固定IDW插值器
+        fixedInterpolator = new IDWInterpolator({
+          power: 2,
+          kNeighbors: props.kNeighbors,
+          useRadius: false
+        })
+
+        // 一次性预计算所有网格点的邻居关系
+        precomputedNeighbors = fixedInterpolator.precomputeNeighbors(channelTemplate, fixedGridInfo)
+
+        isStructureInitialized = true
+        console.log(`[固定结构] 初始化完成 - 网格:${fixedGridInfo.gridSize}x${fixedGridInfo.gridSize}, 有效mask点:${fixedGridInfo.triangleMask?.filter(Boolean).length || 0}`)
+        
+        return true
+      } catch (error) {
+        console.error('[固定结构] 初始化失败:', error)
+        return false
+      }
+    }
+
+    // 🚀 快速热力图数据更新 - 使用固定结构，只更新数值
+    function fastUpdateHeatmapData() {
+      
+      // 确保固定结构已初始化
+      if (!initializeFixedHeatmapStructure()) {
+        console.warn('[快速更新] 固定结构初始化失败，回退到传统模式')
+        return generateInterpolatedHeatmapData()
+      }
+
+      // 🚀 使用标准化SDK数据
+      const currentData = normalizeHboData(props.hboData, props.channelPositions)
+
+      try {
+        // 只更新数值，不重建结构
+        const channelDataWithValues = props.channelPositions.map((channel, index) => ({
+          position: channel.position,
+          value: currentData[index] || 0,  // 直接使用当前SDK数据
+          channelId: channel.channelId || index
+        }))
+
+        // 使用预计算的固定结构进行快速插值
+        const interpolatedGrid = fixedInterpolator.interpolate(
+          channelDataWithValues, 
+          fixedGridInfo, 
+          precomputedNeighbors  // 使用预计算的邻居关系
+        )
+        
+        // 应用高斯平滑
+        const smoothedGrid = fixedInterpolator.applyGaussianSmoothing(
+          interpolatedGrid, 
+          props.gridSize, 
+          props.gaussianSigma
+        )
+
+        // console.log(`[快速更新] 插值完成，有效数据点: ${smoothedGrid.filter(v => !isNaN(v)).length}`)
+
+        // 转换为ECharts格式: [x, y, value]
+        const heatmapData = []
+        for (let y = 0; y < props.gridSize; y++) {
+          for (let x = 0; x < props.gridSize; x++) {
+            const index = y * props.gridSize + x
+            const value = smoothedGrid[index]
+            
+            if (!isNaN(value)) {
+              // 保持与原始代码一致，不翻转Y轴
+              heatmapData.push([x, y, value])
+            }
+          }
+        }
+
+        return heatmapData
+
+      } catch (error) {
+        console.error('[快速更新] 插值计算失败:', error)
+        return generateInterpolatedHeatmapData() // 回退到传统模式
+      }
+    }
+
+    
 
     // 初始化ECharts图表
     async function initializeCharts() {
@@ -343,11 +409,6 @@ export default {
         // 立即触发一次更新
         nextTick(() => {
           updateHeatmapDisplay()
-          
-          // 应用正确的对齐位置（关键步骤）
-          setTimeout(() => {
-            applyHeatmapAlignment()
-          }, 100) // 短暂延迟确保DOM完全就绪
         })
 
         return true
@@ -374,7 +435,7 @@ export default {
         }
 
         if (!props.hboData || props.hboData.length === 0) {
-          console.warn('[热力图] 无HbO数据，使用测试数据')
+        // 无HbO数据时回退到测试数据
           return generateFallbackTestData()
         }
 
@@ -390,7 +451,7 @@ export default {
           }
         })
 
-        console.log(`[热力图IDW] 处理通道数据: ${channelData.length}个通道`)
+        // console.log(`[热力图IDW] 处理通道数据: ${channelData.length}个通道`) // 清理性能影响
 
         // 创建网格信息
         const gridInfo = GridBuilder.createGridInfo(channelData, {
@@ -402,7 +463,7 @@ export default {
           sixDockTriangleVertices: props.sixDockTriangleVertices
         })
 
-        console.log('[热力图IDW] 网格信息:', gridInfo)
+        // console.log('[热力图IDW] 网格信息:', gridInfo) // 清理性能影响
 
         // 创建IDW插值器
         const interpolator = new IDWInterpolator({
@@ -421,7 +482,7 @@ export default {
           props.gaussianSigma
         )
 
-        console.log(`[热力图IDW] 插值完成，网格大小: ${smoothedGrid.length}`)
+        // console.log(`[热力图IDW] 插值完成，网格大小: ${smoothedGrid.length}`) // 清理性能影响
 
         // 转换为ECharts格式: [x, y, value]
         for (let y = 0; y < props.gridSize; y++) {
@@ -436,7 +497,7 @@ export default {
           }
         }
 
-        console.log(`[热力图IDW] ECharts数据点: ${heatmapData.length}`)
+        // console.log(`[热力图IDW] ECharts数据点: ${heatmapData.length}`) // 清理性能影响
         
         return heatmapData
 
@@ -451,7 +512,7 @@ export default {
       const heatmapData = []
       const gridSize = props.gridSize
       
-      console.log('[热力图] 使用备用测试数据')
+      // 使用静态测试数据回退
       
       // 生成简单的径向模式
       for (let y = 0; y < gridSize; y += 3) {
@@ -476,43 +537,55 @@ export default {
         return
       }
 
+      // 硬保护：没有通道位置时直接报错并停止
+      if (!props.channelPositions || props.channelPositions.length === 0) {
+        hasError.value = true
+        errorMessage.value = '通道位置为空，无法渲染热力图（请检查Triangle配置加载）'
+        return
+      }
+
       if (isUpdating) {
-        console.log('[报告风格热力图] 正在更新中，跳过重复请求')
+        console.warn('[报告风格热力图] 正在更新中，跳过重复请求，防止递归调用')
         return
       }
 
       try {
         isUpdating = true
-        isLoading.value = true
+        // 🚀 帧更新不再设置 isLoading - 严格按照 HEATMAP_INSTANT_REFRESH_STORY.md
 
-        // 生成IDW插值热力图数据
-        const heatmapData = generateInterpolatedHeatmapData()
-        
-        console.log('[报告风格热力图] 执行setOption，IDW数据点数:', heatmapData.length)
-
-        // 构建系列数据
-        const series = [{
-          type: 'heatmap',
-          name: 'test-heatmap',
-          data: heatmapData,
-          z: 3,
-          emphasis: { disabled: true }
-        }]
-
-        // 执行更新
-        const option = {
-          series: series
+        // 🚀 使用固定结构快速更新 - 实现"保持上一帧→瞬间切换"
+        const heatmapData = fastUpdateHeatmapData()
+        if (!Array.isArray(heatmapData) || heatmapData.length === 0) {
+          hasError.value = true
+          errorMessage.value = '热力图数据为空（可能是mask覆盖或SDK数据为空）'
+          return
         }
         
-        mainChart.setOption(option, { notMerge: false })
+        // 🚀 构建系列数据
+        const series = [{
+          id: 'hmap',
+          type: 'heatmap',
+          name: 'hbo-heatmap',
+          data: heatmapData,
+          z: 3,
+          emphasis: { disabled: true },
+          progressive: 0,
+          progressiveThreshold: 0,
+          animation: false,
+          animationDuration: 0,
+          animationDurationUpdate: 0
+        }]
+
+        // 🚀 瞬时替换更新
+        // 仅替换数据，避免重建坐标或视觉映射，保证“瞬间替换”
+        mainChart.setOption({ series }, { replaceMerge: ['series'], lazyUpdate: true })
         
-        isLoading.value = false
         hasError.value = false
         
-        console.log('[报告风格热力图] 显示更新完成:', {
-          dataPoints: heatmapData.length,
-          series: series.length
-        })
+        // console.log('[报告风格热力图] 显示更新完成:', {
+        //   dataPoints: heatmapData.length,
+        //   series: series.length
+        // }) // 清理性能影响
 
       } catch (error) {
         console.error('[报告风格热力图] 显示更新失败:', error)
@@ -524,56 +597,45 @@ export default {
       }
     }
 
-    // 监听数据变化
-    watch([() => props.hboData, () => props.channelPositions], 
-      () => {
-        if (!isEChartsReady) return
-        
-        // 使用requestIdleCallback进行异步更新
-        if (updateRequestId) {
-          cancelIdleCallback(updateRequestId)
-        }
-        
-        updateRequestId = requestIdleCallback(() => {
-          updateHeatmapDisplay()
-        }, { timeout: 100 })
-      },
-      { deep: true, immediate: false }
-    )
+    // 节流：在最小间隔内合并多次更新请求
+    function scheduleHeatmapUpdate() {
+      const now = Date.now()
+      const elapsed = now - lastUpdateAt
+      if (elapsed >= MIN_UPDATE_INTERVAL_MS && !isUpdating) {
+        updateHeatmapDisplay()
+        lastUpdateAt = Date.now()
+        return
+      }
+      pendingUpdate = true
+      const delay = Math.max(50, MIN_UPDATE_INTERVAL_MS - elapsed)
+      if (updateDebounceTimer) clearTimeout(updateDebounceTimer)
+      updateDebounceTimer = setTimeout(() => {
+        pendingUpdate = false
+        updateDebounceTimer = null
+        updateHeatmapDisplay()
+        lastUpdateAt = Date.now()
+      }, delay)
+    }
 
-    // 监听alignment参数变化
-    watch(() => props.alignment, 
-      () => {
-        if (!isEChartsReady) return
-        console.log('[热力图对齐] alignment参数变化，重新应用位置')
-        
-        nextTick(() => {
-          applyHeatmapAlignment()
-        })
-      },
-      { deep: true, immediate: false }
-    )
+    // 🚀 简化数据监听 - 严格按照 HEATMAP_INSTANT_REFRESH_STORY.md
+    watch([() => props.hboData, () => props.channelPositions], () => {
+      if (!isEChartsReady) return
+      scheduleHeatmapUpdate()
+    }, { deep: true, immediate: false })
+
 
     // 窗口大小变化监听
     let resizeObserver = null
     
+    // 🚀 简化尺寸监听 - 严格按照 HEATMAP_INSTANT_REFRESH_STORY.md
     function setupResizeListener() {
       if (!window.ResizeObserver) {
-        // 降级到传统window resize事件
-        const handleResize = () => {
-          setTimeout(() => {
-            applyHeatmapAlignment()
-          }, 100)
-        }
+        const handleResize = () => { if (mainChart && !mainChart.isDisposed()) mainChart.resize() }
         window.addEventListener('resize', handleResize)
         return () => window.removeEventListener('resize', handleResize)
       }
-      
-      // 使用ResizeObserver监听容器大小变化
       resizeObserver = new ResizeObserver(() => {
-        setTimeout(() => {
-          applyHeatmapAlignment()
-        }, 50)
+        if (mainChart && !mainChart.isDisposed()) mainChart.resize()
       })
       
       if (chartContainer.value?.parentElement) {
@@ -600,7 +662,13 @@ export default {
         await nextTick()
         
         setTimeout(() => {
-          initializeCharts()
+          const tryInit = async (attempt = 1) => {
+            const ok = await initializeCharts()
+            if (!ok && attempt < 20) { // 最长重试 ~6s（20*300ms）
+              setTimeout(() => tryInit(attempt + 1), 300)
+            }
+          }
+          tryInit()
           
           // 设置响应式监听器
           resizeCleanup = setupResizeListener()
@@ -619,11 +687,8 @@ export default {
     onUnmounted(() => {
       console.log('[报告风格热力图] 组件卸载')
       
-      // 清理定时器
-      if (updateRequestId) {
-        cancelIdleCallback(updateRequestId)
-        updateRequestId = null
-      }
+      // 清理节流定时器
+      if (updateDebounceTimer) clearTimeout(updateDebounceTimer)
 
       // 清理响应式监听器
       if (resizeCleanup) {
@@ -647,11 +712,22 @@ export default {
     // 监听channelPositions变化，触发初始化
     watch(() => props.channelPositions, 
       (newPositions) => {
-        if (newPositions?.length > 0 && !isEChartsReady) {
+        if (newPositions?.length > 0) {
           console.log('[报告风格热力图] channelPositions变化:', newPositions.length)
-          nextTick(() => {
-            initializeCharts()
-          })
+          
+          // 🚀 重置固定结构标志，准备重新初始化
+          isStructureInitialized = false
+          
+          if (!isEChartsReady) {
+            nextTick(() => {
+              initializeCharts()
+            })
+          } else {
+            // ECharts已就绪，触发一次更新以初始化固定结构
+            nextTick(() => {
+              updateHeatmapDisplay()
+            })
+          }
         }
       },
       { immediate: true }

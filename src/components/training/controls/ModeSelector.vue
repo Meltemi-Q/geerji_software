@@ -17,21 +17,6 @@
       
       <button 
         class="large-mode-btn" 
-        :class="{ active: displayMode === 'heatmap' }"
-        @click="$emit('switch-mode', 'heatmap')"
-      >
-        <svg width="32" height="32" class="mode-icon-large">
-          <rect x="4" y="4" width="24" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
-          <circle cx="12" cy="12" r="2" fill="currentColor"/>
-          <circle cx="20" cy="12" r="2" fill="currentColor"/>
-          <circle cx="12" cy="20" r="2" fill="currentColor"/>
-          <circle cx="20" cy="20" r="2" fill="currentColor"/>
-        </svg>
-        <span>传统热力图</span>
-      </button>
-      
-      <button 
-        class="large-mode-btn" 
         :class="{ active: displayMode === 'curve' }"
         @click="$emit('switch-mode', 'curve')"
       >
@@ -81,7 +66,7 @@ export default {
 }
 
 .sidebar-title {
-  font-size: clamp(16px, 1.5vw, 20px); /* 响应式字体 */
+  font-size: clamp(16px, 1.5vw, 28px); /* 响应式字体 */
   font-weight: 700;
   color: #ffffff;
   text-align: center;
@@ -107,7 +92,7 @@ export default {
   border: 2px solid rgba(255, 255, 255, 0.3);
   border-radius: clamp(10px, 1vw, 15px);
   color: #ffffff;
-  font-size: clamp(13px, 1.2vw, 16px); /* 响应式字体 */
+  font-size: clamp(13px, 1.2vw, 22px); /* 响应式字体 */
   font-weight: 600;
   cursor: pointer;
   transition: all 0.3s ease;

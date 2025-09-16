@@ -19,7 +19,7 @@
               </div>
               <div class="device-item">
                 <StatusIndicator status="running" />
-                <span>康助侠运行中</span>
+                <span>康复器械运行中</span>
               </div>
             </div>
           </div>
@@ -105,7 +105,7 @@
             <div class="device-info">
               <div class="info-item">
                 <StatusIndicator status="running" />
-                <span>康助侠: 运行中 低速模式</span>
+                <span>康复器械: 运行中 低速模式</span>
               </div>
               <div class="info-item">
                 <span>数据质量: 良好</span>

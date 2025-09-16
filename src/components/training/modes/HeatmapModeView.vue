@@ -408,14 +408,14 @@ export default {
 }
 
 .heatmap-title {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   color: #ffffff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .current-value {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }

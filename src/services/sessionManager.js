@@ -30,6 +30,8 @@ export class SessionManager {
     
     // 定时器
     this.uploadTimer = null
+    this.cloudEnabled = false // 是否启用云端上传（需成功创建会话ID）
+    this.cloudMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cloud_mode')) || 'disabled' // 'disabled' | 'realtime'
     
     console.log('[会话管理] 初始化完成')
   }
@@ -53,6 +55,13 @@ export class SessionManager {
       if (!patientId) {
         throw new Error('未找到患者信息，请先完成患者信息登记')
       }
+      
+      // 检查是否为本地模式（LOCAL_前缀）
+      const isLocalMode = patientId.startsWith('LOCAL_')
+      if (isLocalMode) {
+        console.log('[会话管理] 检测到本地模式，禁用云端上传功能')
+        this.cloudMode = 'disabled'
+      }
 
       // 生成会话ID
       const sessionId = `SESSION_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
@@ -69,14 +78,18 @@ export class SessionManager {
 
       console.log('[会话管理] 创建新会话:', sessionId, trainingMode)
 
-      // 上传到云端
-      const createResult = await cloudAPI.createTrainingSession(sessionData)
-      if (!createResult.success) {
-        console.warn('[会话管理] 云端会话创建失败，继续本地操作')
+      // 上传到云端（仅实时模式）
+      if (this.cloudMode === 'realtime') {
+        const createResult = await cloudAPI.createTrainingSession(sessionData)
+        if (!createResult.success) {
+          console.warn('[会话管理] 云端会话创建失败，进入本地离线模式')
+        }
       }
 
       // 设置当前会话
       this.currentSession = sessionData
+      // 是否启用云端：实时模式且已分配会话ID
+      this.cloudEnabled = this.cloudMode === 'realtime' && !!localStorage.getItem('current_session_id')
       
       // 重置数据缓冲区和统计
       this.hboDataBuffer = []
@@ -88,8 +101,12 @@ export class SessionManager {
         qualityScore: 0
       }
 
-      // 启动定期上传
-      this.startBatchUpload()
+      // 启动定期上传（仅云端可用时）
+      if (this.cloudEnabled) {
+        this.startBatchUpload()
+      } else {
+        console.log('[会话管理] 离线模式：暂停云端批量上传，仅本地缓冲')
+      }
 
       // 保存到本地存储
       localStorage.setItem('current_session', JSON.stringify(this.currentSession))
@@ -148,8 +165,8 @@ export class SessionManager {
     // 更新统计信息
     this.updateSessionStats(dataPoints)
 
-    // 检查是否需要批量上传
-    if (this.hboDataBuffer.length >= this.batchSize) {
+    // 检查是否需要批量上传（仅云端启用时）
+    if (this.cloudEnabled && this.hboDataBuffer.length >= this.batchSize) {
       this.uploadBatchData()
     }
   }
@@ -222,6 +239,10 @@ export class SessionManager {
    * @private
    */
   startBatchUpload() {
+    if (!this.cloudEnabled) {
+      console.log('[会话管理] 云端未启用，跳过批量上传定时器')
+      return
+    }
     this.stopBatchUpload() // 清理旧定时器
     
     this.uploadTimer = setInterval(() => {
@@ -251,6 +272,11 @@ export class SessionManager {
    */
   async uploadBatchData() {
     if (this.hboDataBuffer.length === 0) return
+    const currentSessionId = localStorage.getItem('current_session_id')
+    if (!this.cloudEnabled || !currentSessionId) {
+      // 未激活云端会话，保持本地缓冲，静默跳过
+      return
+    }
 
     const batchToUpload = this.hboDataBuffer.splice(0, this.batchSize)
     
@@ -290,7 +316,7 @@ export class SessionManager {
   resumeSession() {
     if (this.currentSession) {
       this.currentSession.status = 'active'
-      this.startBatchUpload()
+      if (this.cloudEnabled) this.startBatchUpload()
       console.log('[会话管理] 会话已恢复')
     }
   }
@@ -312,8 +338,8 @@ export class SessionManager {
       // 停止定时上传
       this.stopBatchUpload()
 
-      // 上传剩余数据
-      if (this.hboDataBuffer.length > 0) {
+      // 上传剩余数据（仅云端可用时）
+      if (this.cloudEnabled && this.hboDataBuffer.length > 0) {
         console.log(`[会话管理] 上传剩余数据: ${this.hboDataBuffer.length} 个数据点`)
         await this.uploadBatchData()
       }
@@ -337,7 +363,10 @@ export class SessionManager {
       }
 
       // 上传完整会话数据
-      const result = await cloudAPI.completeTrainingSession(completeSessionData)
+      let result = { success: true }
+      if (this.cloudEnabled && localStorage.getItem('current_session_id')) {
+        result = await cloudAPI.completeTrainingSession(completeSessionData)
+      }
       
       if (result.success) {
         console.log('[会话管理] 会话完成并上传成功')
