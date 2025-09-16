@@ -169,7 +169,7 @@ curl http://localhost:8091/api/fnirs/data
 ### 配置文件
 - `package.json`: 项目依赖和启动脚本
 - `vite.config.js`: Vite构建配置
-- `CLAUDE.md`: Claude Code工作指令和历史记录
+- `CLAUDE.md`: 项目开发指令和历史记录
 
 ### 核心业务文件
 - `App.vue`: 应用主状态管理 (772行)
@@ -183,7 +183,7 @@ curl http://localhost:8091/api/fnirs/data
 
 ## 🤝 协作指南
 
-### 新 Claude Code 接手指南
+### 新开发者接手指南
 1. **阅读本文档**: 理解项目目标和当前状态
 2. **启动前后端**: 按照启动指南验证环境
 3. **访问界面**: http://localhost:3000 体验完整流程
@@ -206,5 +206,5 @@ curl http://localhost:8091/api/fnirs/data
 
 **文档版本**: v1.0  
 **最后更新**: 2025-09-04  
-**维护者**: Claude Code AI Assistant  
+**维护者**: 开发团队  
 **项目状态**: 🟢 活跃开发中，核心功能稳定运行
