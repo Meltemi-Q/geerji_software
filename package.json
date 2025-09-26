@@ -2,11 +2,15 @@
   "name": "kangzhuxia-tablet-demo",
   "version": "1.0.0",
   "description": "康助侠平板端UI演示系统",
-  "main": "main.js",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --port 3000",
+    "dev:3002": "vite --port 3002",
     "build": "vite build",
     "preview": "vite preview",
+    "build:backend": "scripts\\build_fnirs_backend.bat",
+    "dev:electron": "electron .",
+    "build:app": "npm run build:backend && npm run build && electron-builder -w",
     "serve": "python backend/main.py",
     "test": "playwright test",
     "test:ui": "playwright test --ui",
@@ -23,7 +27,39 @@
     "@playwright/mcp": "^0.0.36",
     "@playwright/test": "^1.40.0",
     "@vitejs/plugin-vue": "^5.0.0",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
     "vite": "^5.0.0"
   },
-  "type": "module"
+  "type": "module",
+  "build": {
+    "appId": "com.golgi.app",
+    "productName": "Golgi康复系统",
+    "files": [
+      "dist/**",
+      "electron/**"
+    ],
+    "extraResources": [
+      {
+        "from": "backend_bin/",
+        "to": "backend"
+      }
+    ],
+    "directories": {
+      "output": "release_final"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "win": {
+      "requestedExecutionLevel": "asInvoker",
+      "verifyUpdateCodeSignature": false,
+      "sign": null,
+      "forceCodeSigning": false
+    },
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false
+  }
 }

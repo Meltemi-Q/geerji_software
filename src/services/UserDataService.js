@@ -20,6 +20,8 @@ const CACHE_CONFIG = {
 /**
  * 云端用户数据服务类
  */
+import { cloudAPI } from './geerjiCloudAPI.js'
+
 class UserDataService {
   constructor() {
     // 云端API基础配置 - 通过Vite代理访问
@@ -39,7 +41,8 @@ class UserDataService {
    * 获取所有用户列表（核心功能，2小时缓存）
    * @returns {Promise<Array>} 用户列表，已转换为前端格式
    */
-  async getAllPatients() {
+  async getAllPatients(options = {}) {
+    const force = options?.force === true
     const cacheKey = 'all_patients'
     const cached = this.getCachedData(cacheKey, CACHE_CONFIG.userListTTL)
     
@@ -48,10 +51,10 @@ class UserDataService {
       return cached
     }
     
-    // 检查API调用间隔（保护服务器）
-    if (!this.canCallAPI('getAllPatients')) {
+    // 检查API调用间隔（保护服务器），允许强制刷新跳过
+    if (!force && !this.canCallAPI('getAllPatients')) {
       console.log('[UserDataService] API调用间隔不足，使用本地缓存')
-      return this.getFromLocalStorage('cached_patients', [])
+      return this.getFromLocalStorage('all_patients', [])
     }
     
     try {
@@ -85,8 +88,8 @@ class UserDataService {
       
     } catch (error) {
       console.error('[UserDataService] ❌ 云端API调用失败:', error)
-      // 降级使用本地缓存
-      return this.getFromLocalStorage('cached_patients', [])
+      // 降级使用本地缓存（与写入键保持一致：all_patients → cache_all_patients）
+      return this.getFromLocalStorage('all_patients', [])
     }
   }
 
@@ -174,33 +177,33 @@ class UserDataService {
   async createPatient(patientData) {
     try {
       console.log('[UserDataService] 创建新用户:', patientData.name)
-      
+
+      // 确保有patient_id（服务端也可生成，但前端生成可便于后续引用）
+      const dataWithId = {
+        ...patientData,
+        patient_id: patientData.patient_id || `PATIENT_${Date.now()}`
+      }
+
       const response = await this.fetchWithTimeout(`${this.baseURL}/api/patients`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(patientData)
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dataWithId)
       })
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`)
       }
-      
+
       const result = await response.json()
-      
+
       if (result.success) {
         console.log('[UserDataService] ✅ 新用户创建成功')
-        
-        // 清除用户列表缓存，强制下次重新获取
         this.cache.delete('all_patients')
         localStorage.removeItem('cache_all_patients')
-        
-        return result
+        return { success: true, patient_id: dataWithId.patient_id, data: result }
       } else {
         throw new Error(result.error || '创建用户失败')
       }
-      
     } catch (error) {
       console.error('[UserDataService] ❌ 创建用户失败:', error)
       throw error
@@ -388,8 +391,8 @@ class UserDataService {
   async forceRefreshUserList() {
     const cacheKey = 'all_patients'
     this.cache.delete(cacheKey) // 清除内存缓存
-    console.log('[UserDataService] 🔄 强制刷新用户列表缓存')
-    return await this.getAllPatients()
+    console.log('[UserDataService] 🔄 强制刷新用户列表（跳过最小间隔）')
+    return await this.getAllPatients({ force: true })
   }
 
   /**
@@ -423,7 +426,16 @@ class UserDataService {
     try {
       const savedPatientInfo = localStorage.getItem('patientInfo')
       if (!savedPatientInfo) {
-        return { success: false, error: '未找到需要同步的患者信息' }
+        // 即使没有本地患者信息，也创建稳定的本地ID以支持离线会话
+        const localPatientId = `LOCAL_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+        localStorage.setItem('current_patient_id', localPatientId)
+        console.log('[云端同步] 未找到本地患者信息，已创建本地患者ID:', localPatientId)
+        return { 
+          success: true,
+          patient_id: localPatientId,
+          action: 'offline_mode',
+          message: '未填写患者信息，已为本次训练生成本地患者ID'
+        }
       }
 
       const patientData = JSON.parse(savedPatientInfo)

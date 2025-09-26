@@ -422,42 +422,332 @@ export class SessionManager {
   }
 
   /**
-   * 恢复会话（从本地存储或异常中断后）
+   * 恢复会话（改进版本 - 完整验证和状态检查）
    * @returns {Promise<Object>} 恢复结果
    */
   async restoreSession() {
     try {
+      console.log('[会话管理] 开始恢复会话...')
+
+      // 1. 检查本地存储的会话数据
       const savedSession = localStorage.getItem('current_session')
       if (!savedSession) {
+        console.log('[会话管理] 没有找到需要恢复的会话')
         return { success: false, error: '没有需要恢复的会话' }
       }
 
-      const sessionData = JSON.parse(savedSession)
-      
-      // 检查会话是否过期（超过2小时）
-      const sessionAge = Date.now() - Date.parse(sessionData.session_start)
-      if (sessionAge > 2 * 60 * 60 * 1000) {
-        console.warn('[会话管理] 会话已过期，清理本地数据')
+      let sessionData
+      try {
+        sessionData = JSON.parse(savedSession)
+      } catch (parseError) {
+        console.error('[会话管理] 会话数据解析失败:', parseError)
         localStorage.removeItem('current_session')
+        return { success: false, error: '会话数据已损坏' }
+      }
+
+      // 2. 验证会话数据完整性
+      const validationResult = this.validateSessionData(sessionData)
+      if (!validationResult.valid) {
+        console.warn('[会话管理] 会话数据验证失败:', validationResult.errors)
+        localStorage.removeItem('current_session')
+        return {
+          success: false,
+          error: `会话数据不完整: ${validationResult.errors.join(', ')}`
+        }
+      }
+
+      // 3. 检查会话是否过期
+      const sessionAge = Date.now() - Date.parse(sessionData.session_start)
+      const maxSessionAge = 8 * 60 * 60 * 1000 // 8小时
+
+      if (sessionAge > maxSessionAge) {
+        console.warn(`[会话管理] 会话已过期，年龄: ${Math.round(sessionAge / 1000 / 60)} 分钟`)
+
+        // 保存过期会话到历史记录
+        await this.archiveExpiredSession(sessionData)
+        localStorage.removeItem('current_session')
+
         return { success: false, error: '会话已过期' }
       }
 
-      console.log('[会话管理] 恢复会话:', sessionData.session_id)
-      
-      this.currentSession = sessionData
-      this.startBatchUpload()
+      // 4. 检查患者信息是否还存在
+      const patientId = sessionData.patient_id
+      if (!this.validatePatientExists(patientId)) {
+        console.warn('[会话管理] 患者信息不存在或已被删除:', patientId)
+        localStorage.removeItem('current_session')
+        return { success: false, error: '关联的患者信息不存在' }
+      }
+
+      // 5. 检查云端会话状态（如果启用云端模式）
+      if (this.cloudMode === 'realtime') {
+        const cloudSessionValid = await this.validateCloudSession(sessionData.session_id)
+        if (!cloudSessionValid) {
+          console.warn('[会话管理] 云端会话已失效')
+          // 不直接失败，而是切换到离线模式
+          this.cloudMode = 'disabled'
+          this.cloudEnabled = false
+        }
+      }
+
+      // 6. 恢复会话状态
+      this.currentSession = {
+        ...sessionData,
+        // 更新恢复时间
+        restored_at: new Date().toISOString(),
+        // 标记为已恢复
+        is_restored: true
+      }
+
+      // 7. 恢复数据缓冲区和统计信息
+      await this.restoreSessionBuffer(sessionData.session_id)
+
+      // 8. 重新启动定时器（如果需要）
+      if (this.cloudEnabled && sessionData.status === 'active') {
+        this.startBatchUpload()
+        console.log('[会话管理] 重新启动批量上传定时器')
+      }
+
+      // 9. 启动自动保存
+      this.startAutoSave()
+
+      // 10. 更新本地存储
+      localStorage.setItem('current_session', JSON.stringify(this.currentSession))
+
+      console.log(`[会话管理] 会话恢复成功: ${sessionData.session_id}`)
+      console.log(`[会话管理] 会话详情:`, {
+        sessionId: sessionData.session_id,
+        patientId: sessionData.patient_id,
+        mode: sessionData.training_mode,
+        age: Math.round(sessionAge / 1000 / 60) + ' 分钟',
+        cloudEnabled: this.cloudEnabled
+      })
 
       return {
         success: true,
-        session_data: this.currentSession
+        session_data: this.currentSession,
+        restored_from_age: sessionAge
       }
+
     } catch (error) {
       console.error('[会话管理] 恢复会话失败:', error)
+
+      // 清理可能损坏的数据
       localStorage.removeItem('current_session')
+
       return {
         success: false,
         error: error.message
       }
+    }
+  }
+
+  /**
+   * 验证会话数据完整性
+   */
+  validateSessionData(sessionData) {
+    const errors = []
+    const requiredFields = [
+      'session_id',
+      'patient_id',
+      'training_mode',
+      'session_start',
+      'status'
+    ]
+
+    // 检查必需字段
+    requiredFields.forEach(field => {
+      if (!sessionData[field]) {
+        errors.push(`缺少必需字段: ${field}`)
+      }
+    })
+
+    // 检查字段格式
+    if (sessionData.session_id && !sessionData.session_id.startsWith('SESSION_')) {
+      errors.push('会话ID格式无效')
+    }
+
+    if (sessionData.training_mode &&
+        !['brain', 'heatmap', 'curve', 'game'].includes(sessionData.training_mode)) {
+      errors.push('训练模式无效')
+    }
+
+    if (sessionData.session_start && isNaN(Date.parse(sessionData.session_start))) {
+      errors.push('会话开始时间格式无效')
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors: errors
+    }
+  }
+
+  /**
+   * 验证患者是否还存在
+   */
+  validatePatientExists(patientId) {
+    // 检查本地存储
+    const currentPatientId = localStorage.getItem('current_patient_id')
+    if (currentPatientId === patientId) {
+      return true
+    }
+
+    // 检查患者信息是否在缓存中
+    const userCache = localStorage.getItem('user_data_cache')
+    if (userCache) {
+      try {
+        const cache = JSON.parse(userCache)
+        const patient = cache.users?.find(u => u.patient_id === patientId)
+        return !!patient
+      } catch (error) {
+        console.warn('[会话管理] 用户缓存解析失败:', error)
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * 验证云端会话状态
+   */
+  async validateCloudSession(sessionId) {
+    try {
+      // 这里应该调用实际的云端API检查会话状态
+      const response = await fetch(`${this.apiUrl}/api/sessions/${sessionId}/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 5000
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        return data.active === true
+      }
+
+      return false
+    } catch (error) {
+      console.warn('[会话管理] 云端会话验证失败:', error)
+      return false // 网络错误时默认为无效
+    }
+  }
+
+  /**
+   * 恢复会话数据缓冲区
+   */
+  async restoreSessionBuffer(sessionId) {
+    try {
+      // 尝试从本地存储恢复缓冲区数据
+      const bufferKey = `session_buffer_${sessionId}`
+      const savedBuffer = localStorage.getItem(bufferKey)
+
+      if (savedBuffer) {
+        const bufferData = JSON.parse(savedBuffer)
+
+        // 恢复血氧数据缓冲区
+        if (bufferData.hboDataBuffer && Array.isArray(bufferData.hboDataBuffer)) {
+          this.hboDataBuffer = bufferData.hboDataBuffer
+          console.log(`[会话管理] 恢复数据缓冲区: ${this.hboDataBuffer.length} 个数据点`)
+        }
+
+        // 恢复统计信息
+        if (bufferData.sessionStats) {
+          this.sessionStats = { ...this.sessionStats, ...bufferData.sessionStats }
+          console.log('[会话管理] 恢复会话统计信息')
+        }
+      }
+    } catch (error) {
+      console.warn('[会话管理] 恢复缓冲区数据失败:', error)
+      // 不抛出错误，继续恢复会话
+    }
+  }
+
+  /**
+   * 归档过期会话
+   */
+  async archiveExpiredSession(sessionData) {
+    try {
+      const archivedSessions = JSON.parse(
+        localStorage.getItem('archived_sessions') || '[]'
+      )
+
+      archivedSessions.push({
+        ...sessionData,
+        archived_at: new Date().toISOString(),
+        reason: 'expired'
+      })
+
+      // 只保留最近10个归档会话
+      if (archivedSessions.length > 10) {
+        archivedSessions.splice(0, archivedSessions.length - 10)
+      }
+
+      localStorage.setItem('archived_sessions', JSON.stringify(archivedSessions))
+      console.log('[会话管理] 过期会话已归档:', sessionData.session_id)
+    } catch (error) {
+      console.warn('[会话管理] 归档过期会话失败:', error)
+    }
+  }
+
+  /**
+   * 改进的会话保存方法
+   */
+  saveSessionToLocal() {
+    if (!this.currentSession) {
+      return
+    }
+
+    try {
+      // 保存会话数据
+      const sessionToSave = {
+        ...this.currentSession,
+        last_saved: new Date().toISOString()
+      }
+
+      localStorage.setItem('current_session', JSON.stringify(sessionToSave))
+
+      // 保存缓冲区数据（分离存储）
+      const bufferKey = `session_buffer_${this.currentSession.session_id}`
+      const bufferData = {
+        hboDataBuffer: this.hboDataBuffer.slice(), // 创建副本
+        sessionStats: { ...this.sessionStats },
+        saved_at: new Date().toISOString()
+      }
+
+      localStorage.setItem(bufferKey, JSON.stringify(bufferData))
+
+      console.log(`[会话管理] 会话数据已保存: ${this.currentSession.session_id}`)
+
+    } catch (error) {
+      console.error('[会话管理] 保存会话数据失败:', error)
+    }
+  }
+
+  /**
+   * 定期保存会话数据（每30秒）
+   */
+  startAutoSave() {
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer)
+    }
+
+    this.autoSaveTimer = setInterval(() => {
+      if (this.currentSession && this.currentSession.status === 'active') {
+        this.saveSessionToLocal()
+      }
+    }, 30 * 1000) // 每30秒保存一次
+
+    console.log('[会话管理] 自动保存定时器已启动')
+  }
+
+  /**
+   * 停止自动保存
+   */
+  stopAutoSave() {
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer)
+      this.autoSaveTimer = null
+      console.log('[会话管理] 自动保存定时器已停止')
     }
   }
 }

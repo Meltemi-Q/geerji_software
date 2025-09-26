@@ -5,32 +5,9 @@
       <div class="curve-card">
         <div class="curve-header">
           <h3 class="curve-title">血氧变化曲线</h3>
-          <!-- 时间选择控件 -->
-          <div class="time-selection-controls">
-            <div class="time-range-info">
-              <span class="time-info">历史数据: {{ dataHistory.length }} 帧</span>
-              <span class="time-range">{{ selectedTimeRange.start }} - {{ selectedTimeRange.end }}</span>
-            </div>
-            <div class="time-slider-container">
-              <label class="slider-label">时间范围选择：</label>
-              <input 
-                type="range" 
-                class="time-slider"
-                :min="0"
-                :max="Math.max(0, dataHistory.length - 1)"
-                :value="selectedTimeRange.start"
-                @input="updateTimeRangeStart"
-              />
-              <input 
-                type="range" 
-                class="time-slider"
-                :min="selectedTimeRange.start"
-                :max="Math.max(selectedTimeRange.start, dataHistory.length - 1)"
-                :value="selectedTimeRange.end"
-                @input="updateTimeRangeEnd"
-              />
-              <button class="reset-time-btn" @click="resetTimeRange">重置</button>
-            </div>
+          <div class="time-range-info">
+            <span class="time-info">历史数据: {{ dataHistory.length }} 帧</span>
+            <span class="time-range">显示最近 120 帧</span>
           </div>
         </div>
         <div class="curve-container">
@@ -68,42 +45,19 @@ echarts.use([
 export default {
   name: 'CurveModeView',
   props: {
-    hboData: {
-      type: Array,
-      required: true
-    },
-    hbrData: {
-      type: Array,
-      required: true
-    },
-    currentValues: {
-      type: Object,
-      required: true
-    },
-    // 历史数据相关props
-    dataHistory: {
-      type: Array,
-      default: () => []
-    },
-    selectedTimeRange: {
-      type: Object,
-      default: () => ({ start: 0, end: 100 })
-    }
+    hboData: { type: Array, required: true },
+    hbrData: { type: Array, required: true },
+    currentValues: { type: Object, required: true },
+    dataHistory: { type: Array, default: () => [] }
   },
-  emits: ['update-time-range'],
   setup(props, { emit }) {
     const curveChartRef = ref(null)
-    const curveTimeRange = ref(10) // 默认显示10秒数据
-    
+    const WINDOW_FRAMES = 120
     let curveChart = null
     let resizeListenerAttached = false
-    let updateTimer = null
-    let lastUpdateTime = 0
-    const UPDATE_THROTTLE = 125 // 匹配8Hz数据频率（125ms）
-    const autoScrollEnabled = ref(true) // 启用自动滚动窗口
-    const TIME_WINDOW_MS = 15000 // 默认用于空数据坐标轴范围（与120帧≈15秒匹配）
-    let axisBaseEndTime = 0 // 轴标签基准结束时间（用于窗口对齐）
-    let trainingStartTime = 0 // 训练开始时间（用于累计时间标签）
+    const TIME_WINDOW_MS = 15000
+    let trainingStartTime = 0
+    let rafId = null
     
     // 创建曲线图
     function createCurveChart() {
@@ -123,7 +77,6 @@ export default {
         container.removeChild(container.firstChild)
       }
 
-      console.log('[数据曲线] 初始化ECharts曲线图')
       
       // 创建ECharts实例
       curveChart = echarts.init(container, null, {
@@ -134,25 +87,24 @@ export default {
       // 配置图表选项（优化性能与视觉）
       const option = {
         backgroundColor: 'rgba(255,255,255,0.6)',
-        animation: {
-          duration: 200, // 缩短动画时间提升流畅度
-          easing: 'linear' // 使用线性动画
-        },
+        animation: false,
         tooltip: {
           trigger: 'axis',
           axisPointer: {
             type: 'cross',
-            label: {
-              backgroundColor: '#6a7985'
-            }
+            label: { backgroundColor: '#6a7985' }
           },
-          formatter: function(params) {
-            const time = new Date(params[0].axisValue).toLocaleTimeString()
-            let result = `时间: ${time}<br/>`
-            params.forEach(param => {
-              result += `${param.seriesName}: ${param.value.toFixed(4)} μM<br/>`
-            })
-            return result
+          formatter: (params) => {
+            try {
+              return params.map(p => {
+                const raw = Array.isArray(p.value) ? p.value[1] : p.value
+                const num = typeof raw === 'number' ? raw : Number(raw)
+                const text = Number.isFinite(num) ? num.toFixed(4) : String(raw)
+                return `${p.seriesName}: ${text} μM`
+              }).join('<br/>')
+            } catch (e) {
+              return ''
+            }
           }
         },
         legend: {
@@ -217,7 +169,6 @@ export default {
             }
           }
         },
-        // 移除内置dataZoom，避免鼠标交互影响自动滚动
         series: [
           {
             name: '含氧血红蛋白',
@@ -272,38 +223,26 @@ export default {
       
       curveChart.setOption(option)
       
-      // 不绑定dataZoom事件，避免悬停/点击影响自动滚动
-
       // 窗口大小变化时重新调整（仅绑定一次）
       if (!resizeListenerAttached) {
         window.addEventListener('resize', handleResize)
         resizeListenerAttached = true
       }
       
-      console.log('[数据曲线] ECharts曲线图初始化完成')
+      
     }
     
-    // 10秒滚动窗口曲线更新（统一逻辑）
+    // 最近窗口滚动更新
     function updateScrollingChart() {
       if (!curveChart) {
-        console.warn('[滚动曲线] 图表未初始化，跳过更新')
         return
       }
       
       const now = Date.now()
       
-      // 防抖：避免频繁更新
-      if (now - lastUpdateTime < UPDATE_THROTTLE) {
-        return
-      }
-      lastUpdateTime = now
-      
       // 处理空数据情况：显示空图表但保持坐标轴可见
       if (!props.dataHistory.length) {
-        console.log('[滚动曲线] 暂无数据，显示空图表')
-        axisBaseEndTime = now
-        
-        curveChart.setOption({
+        scheduleSetOption({
           xAxis: {
             min: 0,
             max: TIME_WINDOW_MS,
@@ -318,74 +257,53 @@ export default {
             }
           },
           series: [
-            { data: [] },  // 空的HbO数据
-            { data: [] }   // 空的HbR数据
+            { data: [] },
+            { data: [] }
           ]
-        }, false, false)
+        })
         return
       }
       
-      // 【修复】使用参考项目的高效切片方法
       const dataLength = props.dataHistory.length
       
-      let displayData = []
-      let timeAxisMin, timeAxisMax
-      let startIdx, endIdx
+      const endIdx = dataLength
+      const startIdx = Math.max(0, endIdx - WINDOW_FRAMES)
       
-      // 使用固定帧窗口（120帧）
-      const WINDOW_FRAMES = 120
-      endIdx = dataLength
-      if (dataLength <= WINDOW_FRAMES) {
-        startIdx = 0
-        console.log(`[滚动曲线] 数据不足${WINDOW_FRAMES}帧，显示全部${dataLength}帧`)
-      } else {
-        startIdx = Math.max(0, dataLength - WINDOW_FRAMES)
-        console.log(`[滚动曲线] 显示最新${WINDOW_FRAMES}帧 (第${startIdx}-${endIdx}帧)`)
-      }
-      
-      // 使用高效的slice方法获取显示数据
-      displayData = props.dataHistory.slice(startIdx, endIdx)
+      const displayData = props.dataHistory.slice(startIdx, endIdx)
       
       // 以显示数据的首尾时间作为坐标轴范围（无数据时使用TIME_WINDOW_MS回退）
-      const firstTime = displayData[0]?.recordTime ?? (now - TIME_WINDOW_MS)
       const lastTime = displayData[displayData.length - 1]?.recordTime ?? now
-      timeAxisMin = firstTime
-      timeAxisMax = lastTime
       
-      // 初始化训练开始时间（用于累计时间标签）
+      // 初始化训练开始时间（用于累计时间标签与绝对时间基准）
       if (!trainingStartTime && props.dataHistory.length > 0) {
         trainingStartTime = props.dataHistory[0]?.recordTime || now
       }
 
-      // 窗口对齐：数据不足窗口时从第一帧对齐到0，否则保持末尾对齐
-      const lastRecordTime = displayData[displayData.length - 1]?.recordTime || now
-      const firstRecordTime = displayData[0]?.recordTime || lastRecordTime
-      axisBaseEndTime = lastRecordTime
-      const windowStart = displayData.length < WINDOW_FRAMES 
-        ? firstRecordTime 
-        : (lastRecordTime - TIME_WINDOW_MS)
-      const elapsedStartSec = Math.max(0, Math.floor((windowStart - trainingStartTime) / 1000))
-      // 转换为相对时间（0..TIME_WINDOW_MS）
+      // 采用绝对时间（相对训练开始），仅通过调节 xAxis 窗口实现平滑滚动
+      const lastAbsMs = Math.max(0, lastTime - trainingStartTime)
+      const windowMin = Math.max(0, lastAbsMs - TIME_WINDOW_MS)
+      const windowMax = lastAbsMs
+      const elapsedStartSec = Math.floor(windowMin / 1000)
+
+      // 数据点始终用绝对时间，避免窗口切换时整批重映射
       const hboSeriesData = displayData.map(frame => [
-        Math.max(0, frame.recordTime - windowStart),
+        Math.max(0, frame.recordTime - trainingStartTime),
         frame.hboMean || 0
       ])
       const hbrSeriesData = displayData.map(frame => [
-        Math.max(0, frame.recordTime - windowStart),
+        Math.max(0, frame.recordTime - trainingStartTime),
         frame.hbrMean || 0
       ])
       
-      console.log(`[滚动曲线] 更新图表: HbO=${hboSeriesData.length}点, HbR=${hbrSeriesData.length}点`)
-      
       // 更新图表（固定坐标间隔与位置，仅更新标签与数据）
-      curveChart.setOption({
+      scheduleSetOption({
         xAxis: {
-          min: 0,
-          max: TIME_WINDOW_MS,
+          min: windowMin,
+          max: windowMax,
           interval: 5000,
           axisLabel: {
             formatter: function(value) {
-              const totalSeconds = elapsedStartSec + Math.floor(value / 1000)
+              const totalSeconds = Math.floor(value / 1000)
               const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
               const ss = String(totalSeconds % 60).padStart(2, '0')
               return `${mm}:${ss}`
@@ -396,71 +314,53 @@ export default {
           { data: hboSeriesData },
           { data: hbrSeriesData }
         ]
-      }, false, false) // notMerge=false, lazyUpdate=false 提升性能
+      })
     }
-    
-    // 重置曲线图缩放
-    function resetCurveZoom() {
+
+    function scheduleSetOption(option) {
       if (!curveChart) return
-      
-      console.log('[数据曲线] 重置缩放')
-      curveChart.dispatchAction({
-        type: 'dataZoom',
-        start: 0,
-        end: 100
+      if (rafId) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        try {
+          // lazyUpdate=true，避免在主流程中强制同步刷新
+          curveChart.setOption(option, false, true)
+        } catch (e) {
+          console.error('[数据曲线] setOption 失败:', e)
+        } finally {
+          rafId = null
+        }
       })
     }
     
-    // 更新时间范围（简化逻辑）
-    function updateTimeRange() {
-      console.log(`[数据曲线] 时间范围更改为 ${curveTimeRange.value} 秒`)
-      // 直接更新图表，数据由历史数据统一管理
-      updateScrollingChart()
-    }
-    
-    // 处理窗口大小变化
-    function handleResize() {
-      if (curveChart) {
-        curveChart.resize()
-      }
-    }
-    
-    // 开始更新循环（自动滚动10秒窗口）- 简化版
-    function startUpdateLoop() {
-      // 不使用定时器，完全依赖数据驱动更新
-      console.log('[曲线简化] 移除定时器，使用纯数据驱动更新')
-    }
-    
-    // 停止更新循环 - 简化版
-    function stopUpdateLoop() {
-      // 无定时器需要清理
-      console.log('[曲线简化] 无定时器需要清理')
-    }
+    // 无定时器更新，纯数据驱动
     
     // 初始化曲线图
     async function initCurveChart() {
       await nextTick()
       createCurveChart()
       if (curveChart) {
-        startUpdateLoop()
-        // 立即进行一次更新，显示初始图表（即使没有数据）
         updateScrollingChart()
         console.log('[数据曲线] 初始化更新完成')
       }
     }
     
-    // （已精简）数据更新触发器统一在后文的“滚动更新”监听中处理
+    // 仅监听长度变化，避免深度依赖导致与 ECharts 主流程竞争
+    watch(() => props.dataHistory.length, (len) => {
+      if (len > 0) updateScrollingChart()
+    })
     
     // 组件挂载
     onMounted(async () => {
       console.log('[数据曲线模式] 组件已挂载，使用简化更新逻辑')
-      initCurveChart()
+      await initCurveChart()
     })
     
     // 组件卸载
     onUnmounted(() => {
-      console.log('[数据曲线模式] 组件已卸载')
-      stopUpdateLoop()
+      if (rafId) {
+        cancelAnimationFrame(rafId)
+        rafId = null
+      }
       
       if (resizeListenerAttached) {
         window.removeEventListener('resize', handleResize)
@@ -480,138 +380,9 @@ export default {
       }
     })
     
-    // 时间选择方法
-    function updateTimeRangeStart(event) {
-      // 【修改】当用户操作此滑块时，禁用自动滚动
-      if (autoScrollEnabled.value) {
-        autoScrollEnabled.value = false;
-      }
-      const newStart = parseInt(event.target.value)
-      const newTimeRange = { ...props.selectedTimeRange, start: newStart }
-      emit('update-time-range', newTimeRange)
-      console.log(`[时间选择] 更新开始时间: ${newStart}`)
-      updateHistoricalChart()
-    }
-    
-    function updateTimeRangeEnd(event) {
-      // 【修改】当用户操作此滑块时，禁用自动滚动
-      if (autoScrollEnabled.value) {
-        autoScrollEnabled.value = false;
-      }
-      const newEnd = parseInt(event.target.value)
-      const newTimeRange = { ...props.selectedTimeRange, end: newEnd }
-      emit('update-time-range', newTimeRange)
-      console.log(`[时间选择] 更新结束时间: ${newEnd}`)
-      updateHistoricalChart()
-    }
-    
-    function resetTimeRange() {
-      // 【修改】“重置”按钮现在用于恢复“自动滚动”模式
-      const maxIndex = Math.max(0, props.dataHistory.length - 1)
-      const newTimeRange = { start: 0, end: maxIndex }
-      emit('update-time-range', newTimeRange)
-      console.log('[时间选择] 重置时间范围')
-      
-      if (!autoScrollEnabled.value) {
-        autoScrollEnabled.value = true
-        console.log('[数据曲线] 恢复自动滚动')
-      }
-      
-      // 立即调用滚动更新，确保视图立即切换到实时模式
-      updateScrollingChart()
-    }
-    
-    // 使用历史数据更新图表（加入防抖处理）
-    function updateHistoricalChart() {
-      if (!curveChart || !props.dataHistory.length) return
-      
-      const now = Date.now()
-      if (now - lastUpdateTime < UPDATE_THROTTLE) {
-        return // 防抖：避免频繁更新
-      }
-      lastUpdateTime = now
-      
-      const { start, end } = props.selectedTimeRange
-      const selectedData = props.dataHistory.slice(start, end + 1)
-      if (!trainingStartTime && selectedData.length > 0) {
-        trainingStartTime = selectedData[0]?.recordTime || now
-      }
-      const lastSelTime = selectedData[selectedData.length - 1]?.recordTime || now
-      const firstSelTime = selectedData[0]?.recordTime || lastSelTime
-      axisBaseEndTime = lastSelTime
-      const windowStart = selectedData.length < WINDOW_FRAMES 
-        ? firstSelTime 
-        : (lastSelTime - TIME_WINDOW_MS)
-      const elapsedStartSec = Math.max(0, Math.floor((windowStart - trainingStartTime) / 1000))
-      
-      // 使用SDK统计数据（避免重新计算导致的跳动）
-      const hboSeriesData = selectedData.map(frame => [
-        Math.max(0, frame.recordTime - windowStart),
-        frame.hboMean || 0
-      ])
-      const hbrSeriesData = selectedData.map(frame => [
-        Math.max(0, frame.recordTime - windowStart),
-        frame.hbrMean || 0
-      ])
-      
-      console.log(`[曲线优化] 更新${selectedData.length}帧数据，使用防抖机制`)
-      
-      // 优化更新：固定坐标间隔与位置，仅更新标签与数据
-      curveChart.setOption({
-        xAxis: {
-          min: 0,
-          max: TIME_WINDOW_MS,
-          interval: 5000,
-          axisLabel: {
-            formatter: function(value) {
-              const totalSeconds = elapsedStartSec + Math.floor(value / 1000)
-              const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0')
-              const ss = String(totalSeconds % 60).padStart(2, '0')
-              return `${mm}:${ss}`
-            }
-          }
-        },
-        series: [
-          { data: hboSeriesData },
-          { data: hbrSeriesData }
-        ]
-      }, false, false) // 第三个参数改为false，避免强制重建
-    }
-    
-    // 监听历史数据变化（统一使用滚动图表更新）
-    watch(() => props.dataHistory, () => {
-      if (props.dataHistory.length > 0) {
-        if (autoScrollEnabled.value) {
-          updateScrollingChart()
-        } else {
-          // 在手动模式下，当有新数据时，我们不再自动更新历史视图
-          // 这样可以防止用户正在查看的范围被意外改变
-          // updateHistoricalChart() // 注释掉此行
-        }
-      }
-    }, { deep: true })
-    
-    // 监听时间范围变化
-    watch(() => props.selectedTimeRange, () => {
-      // 此监听器现在主要由手动滑块触发
-      if (!autoScrollEnabled.value) {
-        updateHistoricalChart()
-      }
-    }, { deep: true })
-    
     return {
       curveChartRef,
-      curveTimeRange,
-      resetCurveZoom,
-      updateTimeRange,
-      autoScrollEnabled,
-      // 时间选择方法
-      updateTimeRangeStart,
-      updateTimeRangeEnd,
-      resetTimeRange,
-      // 历史数据相关
-      dataHistory: props.dataHistory,
-      selectedTimeRange: props.selectedTimeRange
+      dataHistory: props.dataHistory
     }
   }
 }

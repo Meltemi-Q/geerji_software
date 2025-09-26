@@ -2,7 +2,11 @@
  * 戈尔基康复训练系统云端API客户端
  * 负责与服务器 (36.134.11.254:5002) 的所有数据通信
  * 支持患者信息、训练会话、血氧数据、截图上传
+ * 【2025-09-20更新】添加API认证机制
  */
+
+import { apiClient } from '../utils/apiClient.js'
+import { handleApiError } from '../utils/errorHandler.js'
 
 // 戈尔基云端API配置
 const API_BASE_URL = 'http://36.134.11.254:5002'
@@ -10,58 +14,50 @@ const API_TIMEOUT = 30000 // 30秒超时
 
 /**
  * 戈尔基云端API客户端类
+ * 【2025-09-20升级】使用增强型API客户端，支持重试和断路器
  */
 export class GeerjiCloudAPI {
   constructor() {
     this.apiUrl = API_BASE_URL
     this.timeout = API_TIMEOUT
-    
-    console.log('[戈尔基云端] API客户端初始化完成')
+
+    // 使用新的API客户端
+    this.client = apiClient
+
+    console.log('[戈尔基云端] API客户端初始化完成 - 支持重试、断路器、缓存')
   }
 
   /**
-   * 通用HTTP请求方法
+   * 通用HTTP请求方法（重写版本）
    * @private
    * @param {string} endpoint - API端点
    * @param {Object} options - 请求选项
    * @returns {Promise<Object>} API响应
    */
   async _request(endpoint, options = {}) {
-    const url = `${this.apiUrl}${endpoint}`
-    const defaultHeaders = {
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    }
-
-    const requestOptions = {
-      timeout: this.timeout,
-      headers: { ...defaultHeaders, ...options.headers },
-      ...options
-    }
-
     try {
-      console.log(`[戈尔基云端] 请求: ${options.method || 'GET'} ${url}`)
-      
-      const response = await fetch(url, requestOptions)
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-      }
+      console.log(`[戈尔基云端] 增强请求: ${options.method || 'GET'} ${endpoint}`)
 
-      const data = await response.json()
-      console.log(`[戈尔基云端] 响应成功: ${JSON.stringify(data).substring(0, 100)}...`)
-      
-      return {
-        success: true,
-        data: data,
-        status: response.status
-      }
+      // 使用新的API客户端（自动包含认证、重试、断路器等功能）
+      const result = await this.client.request(endpoint, {
+        ...options,
+        timeout: this.timeout
+      })
+
+      console.log(`[戈尔基云端] 请求成功: ${JSON.stringify(result.data).substring(0, 100)}...`)
+
+      return result
     } catch (error) {
       console.error('[戈尔基云端] 请求失败:', error)
+
+      // 使用统一错误处理
+      const errorInfo = handleApiError(error, endpoint)
+
       return {
         success: false,
-        error: error.message,
-        status: 0
+        error: errorInfo.userMessage.message,
+        errorType: errorInfo.type,
+        status: error.status || 0
       }
     }
   }
@@ -195,7 +191,7 @@ export class GeerjiCloudAPI {
   async uploadScreenshot(screenshotBase64, metadata = {}) {
     try {
       const sessionId = metadata.session_id || localStorage.getItem('current_session_id')
-      const screenshotType = metadata.type || 'heatmap'
+      const screenshotType = metadata.type || 'assessment'
 
       if (!sessionId) {
         throw new Error('未找到会话ID，请先开始训练')

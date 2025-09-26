@@ -227,6 +227,25 @@ npm run test:report
 - **🌐 网络延迟**: <10ms (本地API)
 - **📱 UI响应时间**: <16ms (60FPS)
 
+## 📦 打包发布（桌面版）
+
+### 1) 一键打包后端（含 SDK）为 EXE（Windows）
+```
+scripts\build_fnirs_backend.bat
+# 产物：backend_bin\fnirs_server.exe
+```
+
+注意：若读取中文路径/文件，已默认 `PYTHONIOENCODING=utf-8`，并建议在后端使用 `Path(getattr(sys, "_MEIPASS", Path(__file__).parent))` 作为基路径加载资源。
+
+### 2) 前端构建
+```
+npm run build   # 生成 dist/
+```
+
+### 3) Electron 最小外壳
+- 入口：`electron/main.js` 会在应用启动时拉起 `backend_bin/fnirs_server.exe`，退出时关闭进程。
+- 若需要完整安装包，可引入 electron-builder 并配置 `build.extraResources` 把 `backend_bin` 嵌入安装包。
+
 ## 🔧 开发指南
 
 ### 环境变量配置

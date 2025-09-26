@@ -1,76 +1,42 @@
 <template>
   <div class="game-container">
-    <!-- 双视频背景（防闪黑屏架构） -->
-    <video
-      ref="videoPlayer1"
-      autoplay
-      loop
-      muted
-      preload="auto"
-      class="video-background"
-      :class="{ 'video-active': activePlayer === 1 }"
-      :playbackRate="videoPlaybackRate"
-      @ended="handleVideoEnded"
-      @error="handleVideoError"
-      @canplay="handleVideoCanPlay"
-    ></video>
-    
-    <video
-      ref="videoPlayer2"
-      autoplay
-      loop
-      muted
-      preload="auto"
-      class="video-background"
-      :class="{ 'video-active': activePlayer === 2 }"
-      :playbackRate="videoPlaybackRate"
-      @ended="handleVideoEnded"
-      @error="handleVideoError"
-      @canplay="handleVideoCanPlay"
-    ></video>
+    <!-- 3D雪球游戏iframe -->
+    <iframe
+      ref="snowballFrame"
+      src="/snowball-game/index.html"
+      class="game-iframe"
+      @load="onGameLoaded"
+    ></iframe>
 
-    <!-- 车把手覆盖层 -->
-    <div class="handlebar" :style="handlebarStyle">
-      <img :src="currentHandlebarImage" alt="Handlebar" @error="handleImageError" />
-    </div>
-
-    <!-- 金币 -->
-    <div
-      v-for="coin in visibleCoins"
-      :key="coin.id"
-      class="coin"
-      :class="{ 'collected': coin.collected }"
-      :style="getCoinStyle(coin)"
-      @animationend="onCoinCollected(coin.id)"
-    ></div>
-
-    <!-- 游戏数据显示 -->
+    <!-- 医疗UI覆盖层（保留原有数据显示） -->
     <GameDataDisplay
       :score="score"
       :oxygen-data="oxygenData"
       :game-speed="gameSpeed"
       :is-device-connected="isDeviceConnected"
       :collection-active="collectionActive"
+      :current-speed="currentSpeed"
+      @speed-change="handleSpeedChange"
     />
-    
-    <!-- 游戏说明（仅首次显示） -->
+
+    <!-- 游戏说明（更新内容） -->
     <div class="game-instructions" v-if="showInstructions">
       <div class="instructions-content">
-        <h3>🚴‍♂️ 脑氧骑行游戏</h3>
-        <p>• 使用 ← → 箭头键控制方向</p>
-        <p>• 收集路径上的金币获得分数</p>
-        <p>• 血氧数据会影响游戏体验</p>
-        <p>• 保持平衡的脑活动获得最佳表现</p>
+        <h3>🌍 3D金币收集游戏</h3>
+        <p>• 使用 ← → 箭头键切换车道</p>
+        <p>• 收集金币获得分数，享受爆炸特效</p>
+        <p>• 血氧平衡影响游戏速度体验</p>
+        <p>• 在蓝天草地上畅快滚动冒险</p>
         <button @click="startGame" class="start-button">开始游戏</button>
       </div>
     </div>
 
-    <!-- 退出按钮 -->
+    <!-- 退出按钮（保留） -->
     <div class="exit-button" @click="handleExit">
       <span>退出游戏</span>
     </div>
 
-    <!-- 提示弹窗 -->
+    <!-- 提示弹窗（保留） -->
     <div v-if="showAlert" class="alert-modal">
       <div class="alert-content">
         <p>{{ alertMessage }}</p>
@@ -114,8 +80,12 @@ export default {
     const showInstructions = ref(true)
     const gameSpeed = ref(5)
     const score = ref(0)
-    
-    // 血氧数据
+    const currentSpeed = ref('medium')
+
+    // iframe引用
+    const snowballFrame = ref(null)
+
+    // 血氧数据（保留原有逻辑）
     const oxygenData = ref({
       leftFrontal: 65,
       rightFrontal: 68,
@@ -125,252 +95,28 @@ export default {
     // 提示弹窗相关
     const showAlert = ref(false)
     const alertMessage = ref('')
-    
-    // 双视频相关（防闪黑屏架构）
-    const videoPlayer1 = ref(null)
-    const videoPlayer2 = ref(null)
-    const activePlayer = ref(1) // 当前活跃的播放器 1 or 2
-    const currentVideoState = ref('straight')
-    const isTransitioning = ref(false)
-    
-    // 双视频状态管理
-    const player1State = ref('straight') // player1当前加载的视频状态
-    const player2State = ref('') // player2当前加载的视频状态
-    const videoQueue = ref([]) // 视频切换队列
-    
-    // 视频资源路径
-    const videoSources = {
-      'straight': new URL('../../../../assets/videos/straight.mp4', import.meta.url).href,
-      'left-turn': new URL('../../../../assets/videos/left_turn.mp4', import.meta.url).href,
-      'right-turn': new URL('../../../../assets/videos/right_turn.mp4', import.meta.url).href,
-      'left-straight': new URL('../../../../assets/videos/left_straight.mp4', import.meta.url).href,
-      'right-straight': new URL('../../../../assets/videos/right_straight.mp4', import.meta.url).href,
-      'left-to-center': new URL('../../../../assets/videos/left_to_center.mp4', import.meta.url).href,
-      'right-to-center': new URL('../../../../assets/videos/right_to_center.mp4', import.meta.url).href
-    }
-    
-    const videoStates = {
-      STRAIGHT: 'straight',
-      LEFT_TURN: 'left-turn',
-      RIGHT_TURN: 'right-turn',
-      LEFT_STRAIGHT: 'left-straight',
-      RIGHT_STRAIGHT: 'right-straight',
-      LEFT_TO_CENTER: 'left-to-center',
-      RIGHT_TO_CENTER: 'right-to-center'
+
+    // iframe游戏加载完成
+    const onGameLoaded = () => {
+      console.log('🎮 3D金币游戏加载完成')
     }
 
-    const currentVideo = computed(() => videoSources[currentVideoState.value])
-    const videoPlaybackRate = computed(() => {
-      const baseRate = 1.0
-      const speedFactor = gameSpeed.value / 5.0 // 正常速度为5
-      return Math.max(0.5, Math.min(1.5, baseRate * speedFactor))
-    })
+    // 计算血氧影响的速度倍数
+    const calculateSpeedMultiplier = (oxygenData) => {
+      if (!oxygenData) return 1
 
-    // 双视频预加载和管理
-    const initializeVideo = (videoElement, videoState) => {
-      if (!videoElement || !videoSources[videoState]) return false
-      
-      videoElement.src = videoSources[videoState]
-      videoElement.loop = (
-        videoState === videoStates.STRAIGHT || 
-        videoState === videoStates.LEFT_STRAIGHT || 
-        videoState === videoStates.RIGHT_STRAIGHT
-      )
-      videoElement.load()
-      return true
-    }
+      const leftFrontal = oxygenData.leftFrontal || 65
+      const rightFrontal = oxygenData.rightFrontal || 68
+      const difference = Math.abs(leftFrontal - rightFrontal)
 
-    const preloadAllVideos = () => {
-      // 初始化第一个播放器为straight视频
-      if (videoPlayer1.value) {
-        initializeVideo(videoPlayer1.value, 'straight')
-        player1State.value = 'straight'
-        console.log('[双视频] Player1 预加载: straight')
+      // 血氧差异越大，游戏速度越快（挑战性增加）
+      if (difference > 15) {
+        return 1.5 // 快速
+      } else if (difference > 8) {
+        return 1.2 // 中速
+      } else {
+        return 1.0 // 正常
       }
-      
-      // 第二个播放器暂时为空，等待第一次切换时加载
-      if (videoPlayer2.value) {
-        player2State.value = ''
-        videoPlayer2.value.style.visibility = 'hidden'
-        console.log('[双视频] Player2 待机中')
-      }
-    }
-
-    // 车把手相关
-    const windowWidth = ref(window.innerWidth)
-    const windowHeight = ref(window.innerHeight)
-    const keyboard = ref({
-      ArrowLeft: false,
-      ArrowRight: false
-    })
-
-    const currentHandlebarImage = computed(() => {
-      try {
-        if (keyboard.value.ArrowLeft) {
-          return new URL('../../../../assets/game/handler_left.png', import.meta.url).href
-        } else if (keyboard.value.ArrowRight) {
-          return new URL('../../../../assets/game/handler_right.png', import.meta.url).href
-        } else {
-          return new URL('../../../../assets/game/handler_center.png', import.meta.url).href
-        }
-      } catch (error) {
-        console.warn('车把手图片加载失败，使用占位符')
-        return 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjUwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNTAiIGZpbGw9IiM2NjYiLz48L3N2Zz4='
-      }
-    })
-
-    const handlebarStyle = computed(() => {
-      let rotation = 0
-      if (currentVideoState.value === 'left-turn' || currentVideoState.value === 'left-to-center') {
-        rotation = -5
-      } else if (currentVideoState.value === 'right-turn' || currentVideoState.value === 'right-to-center') {
-        rotation = 5
-      }
-
-      return {
-        width: `${windowWidth.value * 0.55}px`,
-        bottom: '0%',
-        left: '48%',
-        transform: `translateX(-50%) rotate(${rotation}deg)`,
-        filter: 'drop-shadow(0 6px 12px rgba(0, 0, 0, 0.4))',
-      }
-    })
-
-    // 金币系统
-    const coins = ref([])
-    const coinIdCounter = ref(0)
-    const visibleCoins = computed(() => coins.value.filter(coin => coin.position.z >= 0 && coin.position.z <= 100))
-
-    const generateCoin = () => {
-      const trajectory = Math.random() < 0.5 ? 'left' : 'right'
-      coins.value.push({
-        id: coinIdCounter.value++,
-        trajectory,
-        position: { z: 0 },
-        collected: false,
-      })
-    }
-
-    // 获取当前活跃播放器（金币逻辑专用）
-    const getCurrentActivePlayer = () => {
-      return activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
-    }
-
-    const getCoinStyle = (coin) => {
-      const zPos = coin.position.z
-      const scale = 0.2 + (zPos / 100) * 0.8
-
-      // 基础位置（地平线处）
-      let xPosBase = coin.trajectory === 'left' ? 46.5 : 48.5
-      const divergence = (zPos / 100) * 45 // 基础发散角度
-      let xPos = coin.trajectory === 'left'
-        ? xPosBase - divergence 
-        : xPosBase + divergence
-
-      // 根据当前视频状态调整曲率
-      let curveOffset = 0
-      
-      // 获取当前活跃播放器
-      const currentPlayer = getCurrentActivePlayer()
-      
-      // 左转状态 - 强烈向左弯曲
-      if (currentVideoState.value === videoStates.LEFT_TURN) {
-        // 转弯过程中，曲率随视频播放进度变化
-        const progress = currentPlayer ? 
-          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
-        curveOffset = (100 - zPos) * -0.15 * progress
-      } 
-      // 左直行状态 - 保持左偏
-      else if (currentVideoState.value === videoStates.LEFT_STRAIGHT) {
-        curveOffset = (100 - zPos) * -0.15 // 保持固定左偏
-      }
-      // 左回中状态 - 逐渐减小左偏
-      else if (currentVideoState.value === videoStates.LEFT_TO_CENTER) {
-        const progress = currentPlayer ? 
-          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
-        curveOffset = (100 - zPos) * -0.15 * (1 - progress) // 从左偏逐渐回中
-      }
-      // 右转状态 - 强烈向右弯曲
-      else if (currentVideoState.value === videoStates.RIGHT_TURN) {
-        const progress = currentPlayer ? 
-          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
-        curveOffset = (100 - zPos) * 0.15 * progress
-      }
-      // 右直行状态 - 保持右偏
-      else if (currentVideoState.value === videoStates.RIGHT_STRAIGHT) {
-        curveOffset = (100 - zPos) * 0.15 // 保持固定右偏
-      }
-      // 右回中状态 - 逐渐减小右偏
-      else if (currentVideoState.value === videoStates.RIGHT_TO_CENTER) {
-        const progress = currentPlayer ? 
-          Math.min(1, currentPlayer.currentTime / currentPlayer.duration) : 0
-        curveOffset = (100 - zPos) * 0.15 * (1 - progress) // 从右偏逐渐回中
-      }
-      
-      // 应用曲率偏移
-      xPos += curveOffset
-
-      // Y位置计算（不变）
-      const yPos = 44 + (zPos / 100) * 40
-      
-      return {
-        left: `${xPos}%`,
-        top: `${yPos}%`,
-        width: `${windowWidth.value * 0.05 * scale}px`,
-        height: `${windowWidth.value * 0.05 * scale}px`,
-        zIndex: Math.floor(20 + zPos),
-      }
-    }
-
-    const checkCoinCollisions = () => {
-      coins.value.forEach(coin => {
-        if (coin.collected) return
-        if (coin.position.z > 80) {
-          if (
-            (coin.trajectory === 'left' && 
-              (currentVideoState.value === videoStates.LEFT_TURN || 
-               currentVideoState.value === videoStates.LEFT_STRAIGHT)) ||
-            (coin.trajectory === 'right' && 
-              (currentVideoState.value === videoStates.RIGHT_TURN || 
-               currentVideoState.value === videoStates.RIGHT_STRAIGHT))
-          ) {
-            coin.collected = true
-            score.value += 10
-            emit('coin-collected', { score: score.value, timestamp: Date.now() })
-          }
-        }
-      })
-    }
-
-    const onCoinCollected = (id) => {
-      const index = coins.value.findIndex(c => c.id === id)
-      if (index !== -1) coins.value.splice(index, 1)
-    }
-
-    // 游戏循环
-    const animate = () => {
-      if (showInstructions.value) {
-        requestAnimationFrame(animate)
-        return
-      }
-
-      coins.value.forEach(coin => {
-        if (!coin.collected) {
-          let speedMultiplier = 1
-          if (currentVideoState.value === 'left-turn' && coin.trajectory === 'left') {
-            speedMultiplier = 1.2
-          } else if (currentVideoState.value === 'right-turn' && coin.trajectory === 'right') {
-            speedMultiplier = 1.2
-          }
-          coin.position.z += gameSpeed.value * 0.3 * speedMultiplier
-        }
-      })
-      coins.value = coins.value.filter(coin => coin.position.z <= 120 || coin.collected)
-      checkCoinCollisions()
-
-      if (Math.random() < 0.006 * gameSpeed.value) generateCoin()
-
-      requestAnimationFrame(animate)
     }
 
     // 更新血氧数据
@@ -379,25 +125,35 @@ export default {
         try {
           const avgHbO = props.currentValues.avgHbO || 0.025
           const avgHbR = props.currentValues.avgHbR || -0.015
-          
+
           // 转换为百分比显示
           const convertToPercentage = (value) => 65 + (value / 0.001) * 15
-          
+
           const leftFrontal = Math.max(50, Math.min(85, convertToPercentage(avgHbO + (Math.random() - 0.5) * 0.0001)))
           const rightFrontal = Math.max(50, Math.min(85, convertToPercentage(avgHbO + (Math.random() - 0.5) * 0.0001)))
-          
+
           oxygenData.value = {
             leftFrontal,
             rightFrontal,
             timestamp: Date.now(),
           }
-          
+
           // 根据血氧差异调整游戏速度
           const oxyDifference = Math.abs(oxygenData.value.leftFrontal - oxygenData.value.rightFrontal)
           if (oxyDifference > 10) {
             gameSpeed.value = Math.min(9, gameSpeed.value + 0.1)
           } else {
             gameSpeed.value = Math.max(3, gameSpeed.value - 0.05)
+          }
+
+          // 发送血氧数据到iframe游戏
+          if (snowballFrame.value && snowballFrame.value.contentWindow) {
+            const speedMultiplier = calculateSpeedMultiplier(oxygenData.value)
+            snowballFrame.value.contentWindow.postMessage({
+              type: 'oxygen-data',
+              speedMultiplier: speedMultiplier,
+              oxygenData: oxygenData.value
+            }, '*')
           }
         } catch (error) {
           console.error('更新血氧数据时出错:', error)
@@ -412,172 +168,32 @@ export default {
       }
     }
 
-    // 键盘按下处理 - 来自参考项目的稳定版本
-    const handleKeyDown = (e) => {
-      if (isTransitioning.value) return  // 过渡期间不响应按键
-      
-      if (e.key === 'ArrowLeft') {
-        keyboard.value.ArrowLeft = true
-        
-        // 根据当前状态决定下一个视频
-        if (currentVideoState.value === videoStates.STRAIGHT) {
-          // 直行状态按左键 -> 左转
-          switchVideo(videoStates.LEFT_TURN)
-        }
-        else if (currentVideoState.value === videoStates.RIGHT_STRAIGHT) {
-          // 右直行按左键 -> 右回中
-          switchVideo(videoStates.RIGHT_TO_CENTER)
-        }
-        // 其他状态不响应
-      } 
-      else if (e.key === 'ArrowRight') {
-        keyboard.value.ArrowRight = true
-        
-        // 根据当前状态决定下一个视频
-        if (currentVideoState.value === videoStates.STRAIGHT) {
-          // 直行状态按右键 -> 右转
-          switchVideo(videoStates.RIGHT_TURN)
-        }
-        else if (currentVideoState.value === videoStates.LEFT_STRAIGHT) {
-          // 左直行按右键 -> 左回中
-          switchVideo(videoStates.LEFT_TO_CENTER)
-        }
-        // 其他状态不响应
-      }
-    }
-
-    // 键盘松开处理 - 来自参考项目的稳定版本
-    const handleKeyUp = (e) => {
-      if (e.key === 'ArrowLeft') {
-        keyboard.value.ArrowLeft = false
-        
-        // 左直行中松开左键且右键没按 -> 左回中
-        if (currentVideoState.value === videoStates.LEFT_STRAIGHT && !keyboard.value.ArrowRight) {
-          switchVideo(videoStates.LEFT_TO_CENTER)
-        }
-        // 左转中松开不做特殊处理，等视频结束时处理
-      } 
-      else if (e.key === 'ArrowRight') {
-        keyboard.value.ArrowRight = false
-        
-        // 右直行中松开右键且左键没按 -> 右回中
-        if (currentVideoState.value === videoStates.RIGHT_STRAIGHT && !keyboard.value.ArrowLeft) {
-          switchVideo(videoStates.RIGHT_TO_CENTER)
-        }
-        // 右转中松开不做特殊处理，等视频结束时处理
-      }
-    }
-
-    // 双视频无缝切换（防闪黑屏核心技术）
-    const switchVideo = async (newState) => {
-      if (currentVideoState.value === newState || isTransitioning.value) return
-      
-      console.log(`[双视频] 切换视频: ${currentVideoState.value} -> ${newState}`)
-      isTransitioning.value = true
-      
-      // 获取当前活跃和待机播放器
-      const currentPlayer = activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
-      const nextPlayer = activePlayer.value === 1 ? videoPlayer2.value : videoPlayer1.value
-      const nextPlayerRef = activePlayer.value === 1 ? player2State : player1State
-      
-      // 在待机播放器中预加载新视频
-      if (nextPlayer && initializeVideo(nextPlayer, newState)) {
-        nextPlayerRef.value = newState
-        
-        try {
-          // 同步播放时间（关键技术点）
-          if (currentPlayer && !currentPlayer.paused) {
-            const currentTime = currentPlayer.currentTime
-            nextPlayer.currentTime = currentTime
-          }
-          
-          // 设置播放速度
-          nextPlayer.playbackRate = videoPlaybackRate.value
-          nextPlayer.muted = true
-          
-          // 预播放待机视频（静音）
-          await nextPlayer.play()
-          
-          // 立即切换显示（无缝切换关键）
-          nextPlayer.style.visibility = 'visible'
-          currentPlayer.style.visibility = 'hidden'
-          
-          // 更新活跃播放器
-          activePlayer.value = activePlayer.value === 1 ? 2 : 1
-          currentVideoState.value = newState
-          
-          // 停止之前的播放器节省资源
-          if (currentPlayer) {
-            currentPlayer.pause()
-          }
-          
-          console.log(`[双视频] 切换完成: Player${activePlayer.value} 播放 ${newState}`)
-          
-        } catch (error) {
-          console.error('[双视频] 播放失败:', error)
-          // 降级到当前播放器继续播放
-          nextPlayer.style.visibility = 'hidden'
-        }
-      }
-      
-      isTransitioning.value = false
-    }
-
-    // 处理视频结束事件
-    const handleVideoEnded = () => {
-      if (isTransitioning.value) return
-      
-      console.log(`[游戏] 视频播放结束: ${currentVideoState.value}`)
-      
-      if (currentVideoState.value === videoStates.LEFT_TURN) {
-        if (keyboard.value.ArrowLeft) {
-          switchVideo(videoStates.LEFT_STRAIGHT)
-        } else {
-          switchVideo(videoStates.STRAIGHT)
-        }
-      } 
-      else if (currentVideoState.value === videoStates.RIGHT_TURN) {
-        if (keyboard.value.ArrowRight) {
-          switchVideo(videoStates.RIGHT_STRAIGHT)
-        } else {
-          switchVideo(videoStates.STRAIGHT)
-        }
-      } 
-      else if (currentVideoState.value === videoStates.LEFT_TO_CENTER) {
-        if (keyboard.value.ArrowRight) {
-          switchVideo(videoStates.RIGHT_TURN)
-        } else if (keyboard.value.ArrowLeft) {
-          switchVideo(videoStates.LEFT_TURN)
-        } else {
-          switchVideo(videoStates.STRAIGHT)
-        }
-      } 
-      else if (currentVideoState.value === videoStates.RIGHT_TO_CENTER) {
-        if (keyboard.value.ArrowLeft) {
-          switchVideo(videoStates.LEFT_TURN)
-        } else if (keyboard.value.ArrowRight) {
-          switchVideo(videoStates.RIGHT_TURN)
-        } else {
-          switchVideo(videoStates.STRAIGHT)
-        }
-      }
-    }
-
-    const handleVideoError = (e) => {
-      console.error('视频加载失败:', currentVideo.value, e)
-      showAlertMessage('视频加载失败，请检查网络连接')
-    }
-
-    const handleImageError = (e) => {
-      console.error('图片加载失败:', currentHandlebarImage.value, e)
-    }
-
-    const handleVideoCanPlay = () => {
-      const currentPlayer = getCurrentActivePlayer()
-      if (currentPlayer && currentPlayer.paused) {
-        currentPlayer.play().catch(error => {
-          console.error('[双视频] 视频播放失败:', error)
+    // 接收iframe游戏的消息
+    const handleGameMessage = (event) => {
+      if (event.data.type === 'score-update') {
+        score.value = event.data.score
+        console.log(`🏆 分数更新: ${score.value}`)
+        emit('coin-collected', {
+          score: event.data.score,
+          timestamp: event.data.timestamp
         })
+      }
+    }
+
+    // 键盘事件处理 - 转发到iframe游戏
+    const handleKeyDown = (event) => {
+      // 只处理游戏相关的按键：左箭头(37)、上箭头(38)、右箭头(39)
+      if ([37, 38, 39].includes(event.keyCode)) {
+        event.preventDefault() // 阻止默认行为
+
+        // 转发键盘事件到iframe游戏
+        if (snowballFrame.value && snowballFrame.value.contentWindow) {
+          snowballFrame.value.contentWindow.postMessage({
+            type: 'keydown',
+            keyCode: event.keyCode
+          }, '*')
+          console.log('⌨️ 键盘事件已转发到游戏:', event.keyCode)
+        }
       }
     }
 
@@ -592,16 +208,39 @@ export default {
 
     const startGame = () => {
       showInstructions.value = false
+      console.log('🚀 3D金币游戏开始!')
     }
 
     const handleExit = () => {
+      // 通知iframe游戏退出
+      if (snowballFrame.value && snowballFrame.value.contentWindow) {
+        snowballFrame.value.contentWindow.postMessage({
+          type: 'exit-game'
+        }, '*')
+      }
       emit('exit-game')
     }
 
-    // 窗口大小变化
-    const handleResize = () => {
-      windowWidth.value = window.innerWidth
-      windowHeight.value = window.innerHeight
+    // 速度等级定义
+    const speedLevels = {
+      low: 0.003,
+      medium: 0.006,
+      high: 0.009
+    }
+
+    // 处理速度变化
+    const handleSpeedChange = (level) => {
+      currentSpeed.value = level
+      console.log('🎮 切换游戏速度到:', level, speedLevels[level])
+
+      // 发送速度变化消息到iframe游戏
+      if (snowballFrame.value && snowballFrame.value.contentWindow) {
+        snowballFrame.value.contentWindow.postMessage({
+          type: 'speed-change',
+          speed: speedLevels[level],
+          level: level
+        }, '*')
+      }
     }
 
     // 监听血氧数据变化
@@ -611,114 +250,50 @@ export default {
       }
     }, { deep: true })
 
-    // 双视频组件生命周期
+    // 组件生命周期
     let dataUpdateLoop
     onMounted(() => {
-      console.log('[双视频] 组件初始化开始')
-      
-      // 初始化双视频系统
-      preloadAllVideos()
-      
-      // 启动第一个播放器
-      if (videoPlayer1.value) {
-        videoPlayer1.value.muted = true
-        videoPlayer1.value.style.visibility = 'visible'
-        videoPlayer1.value.play().catch(err => {
-          console.error('[双视频] Player1 初始播放失败:', err)
-          setTimeout(() => {
-            videoPlayer1.value.play().catch(error => 
-              console.error('[双视频] Player1 重试播放失败:', error)
-            )
-          }, 500)
-        })
-      }
-      
-      requestAnimationFrame(animate)
-      dataUpdateLoop = setInterval(updateBrainOxygenData, 50)
-      
+      console.log('🎮 3D金币游戏组件初始化')
+
+      // 监听iframe消息
+      window.addEventListener('message', handleGameMessage)
+
+      // 监听键盘事件并转发到游戏
       window.addEventListener('keydown', handleKeyDown)
-      window.addEventListener('keyup', handleKeyUp)
-      window.addEventListener('resize', handleResize)
-    })
-    
-    // 同步播放状态管理
-    const syncVideoStates = () => {
-      const currentPlayer = activePlayer.value === 1 ? videoPlayer1.value : videoPlayer2.value
-      
-      if (currentPlayer) {
-        // 同步播放速度
-        currentPlayer.playbackRate = videoPlaybackRate.value
-        
-        // 监控播放状态
-        if (currentPlayer.paused) {
-          currentPlayer.play().catch(err => {
-            console.warn('[双视频] 自动恢复播放失败:', err)
-          })
-        }
-      }
-    }
-    
-    // 定时同步播放状态
-    setInterval(syncVideoStates, 1000)
 
-    // 双视频IntersectionObserver优化
-    onMounted(() => {
-      const dualVideoObserver = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            const video = entry.target
-            if (video.paused && video.style.visibility !== 'hidden') {
-              video.play().catch(err => console.error('[双视频] 懒加载播放失败:', err))
-            }
-          }
-        })
-      }, { threshold: 0.1 })
-
-      // 监控两个播放器
-      if (videoPlayer1.value) {
-        dualVideoObserver.observe(videoPlayer1.value)
-      }
-      if (videoPlayer2.value) {
-        dualVideoObserver.observe(videoPlayer2.value)
-      }
+      // 启动血氧数据更新循环
+      dataUpdateLoop = setInterval(updateBrainOxygenData, 100) // 100ms更新一次
     })
 
     onUnmounted(() => {
-      console.log('[游戏组件] 清理资源')
+      console.log('🎮 3D金币游戏组件清理')
       clearInterval(dataUpdateLoop)
+      window.removeEventListener('message', handleGameMessage)
       window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
-      window.removeEventListener('resize', handleResize)
     })
 
     return {
+      // 状态
       showInstructions,
       gameSpeed,
       score,
+      currentSpeed,
       oxygenData,
-      // 双视频相关
-      videoPlayer1,
-      videoPlayer2,
-      activePlayer,
-      currentVideo,
-      videoPlaybackRate,
-      isTransitioning,
-      getCurrentActivePlayer, // 金币逻辑需要
-      currentHandlebarImage,
-      handlebarStyle,
-      visibleCoins,
-      getCoinStyle,
-      onCoinCollected,
-      handleVideoEnded,
-      handleVideoError,
-      handleImageError,
-      handleVideoCanPlay,
       showAlert,
       alertMessage,
+
+      // refs
+      snowballFrame,
+
+      // 方法
+      onGameLoaded,
       showAlertMessage,
       closeAlert,
       startGame,
       handleExit,
+      handleSpeedChange,
+
+      // computed
       isDeviceConnected: computed(() => props.isDeviceConnected),
       collectionActive: computed(() => props.collectionActive)
     }
@@ -735,60 +310,19 @@ export default {
   background-color: #333;
 }
 
-.video-background {
+/* 3D游戏iframe */
+.game-iframe {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  border: none;
   z-index: 1;
-  background-color: #333; /* 防闪白背景 */
-  transform: translateZ(0); /* 硬件加速 */
-  will-change: visibility; /* 优化visibility变化 */
-  visibility: hidden; /* 默认隐藏，通过JS控制显示 */
+  background-color: #333; /* 防止加载时闪白 */
 }
 
-/* 双视频切换样式 */
-.video-active {
-  visibility: visible !important;
-}
-
-.handlebar {
-  position: absolute;
-  z-index: 2;
-}
-
-.handlebar img {
-  width: 100%;
-  height: auto;
-  opacity: 0.95;
-}
-
-.coin {
-  position: absolute;
-  background-image: url('../../../../assets/images/coin.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
-  z-index: 3;
-}
-
-.coin.collected {
-  animation: collect 0.3s forwards;
-}
-
-@keyframes collect {
-  0% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  100% {
-    transform: scale(2);
-    opacity: 0;
-  }
-}
-
+/* 退出按钮（保留原样式） */
 .exit-button {
   position: absolute;
   top: 20px;
@@ -811,6 +345,7 @@ export default {
   transform: translateY(-1px);
 }
 
+/* 提示弹窗（保留原样式） */
 .alert-modal {
   position: fixed;
   top: 0;
@@ -853,6 +388,7 @@ export default {
   background-color: #2980b9;
 }
 
+/* 游戏说明（保留原样式） */
 .game-instructions {
   position: absolute;
   top: 0;

@@ -1,12 +1,12 @@
 <template>
   <div class="obelab-standby-view">
-    <!-- 顶部header -->
-    <div class="top-header">
+    <!-- ultrathink: 隐藏整个顶部横条和Golgi标题 -->
+    <!-- <div class="top-header">
       <div class="system-branding">
         <span class="golgi-text-header">Golgi</span>
         <span class="system-subtitle">脑机交互智能康复训练系统</span>
       </div>
-    </div>
+    </div> -->
 
     <!-- 主内容区域 -->
     <div class="main-content">
@@ -148,7 +148,6 @@
     
     <!-- 用户选择器 -->
     <SearchableUserSelect
-      v-if="showPatientSelector"
       :visible="showPatientSelector"
       @close="showPatientSelector = false"
       @select-patient="handleSelectExistingPatient"
@@ -156,8 +155,8 @@
     />
     
     <!-- 用户信息弹窗 -->
-    <PatientInfoModal 
-      v-if="showPatientModal"
+    <PatientInfoModal
+      :visible="showPatientModal"
       @close="showPatientModal = false"
       @save="savePatientInfo"
     />
@@ -328,7 +327,9 @@ export default {
               smoking: patientDetail.conditions?.smoking || false,
               heartDisease: patientDetail.conditions?.heart_disease || false,
               dyslipidemia: patientDetail.conditions?.dyslipidemia || false
-            }
+            },
+            // 保留云端患者ID，确保持久化
+            patient_id: patientDetail.patient_id || patient.id
           }
           
           // 直接保存用户信息并标记为完成
@@ -348,7 +349,9 @@ export default {
           conditions: {
             hypertension: false, diabetes: false, smoking: false,
             heartDisease: false, dyslipidemia: false
-          }
+          },
+          // 退化路径也带上ID，避免丢失
+          patient_id: patient.id
         }
         savePatientInfo(basicFormData)
       }
@@ -368,8 +371,15 @@ export default {
     // 保存用户信息
     async function savePatientInfo(data) {
       try {
-        // 保存到本地存储
+        // 规范化并保存到本地存储（确保存在稳定的 patient_id）
+        let pid = data?.patient_id
+        if (!pid) {
+          // 若没有ID则创建本地离线ID
+          pid = `LOCAL_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`
+          data = { ...data, patient_id: pid }
+        }
         localStorage.setItem('patientInfo', JSON.stringify(data))
+        localStorage.setItem('current_patient_id', pid)
         
         // 如果是新用户，尝试上传到云端并更新本地缓存
         if (data.isNewUser !== false) {
@@ -393,26 +403,49 @@ export default {
           }
           
           try {
-            // 上传到云端（这里需要实现上传API调用）
-            // const savedUser = await userDataService.saveNewPatient(cloudUserData)
-            
-            // 暂时直接添加到本地缓存（模拟云端保存成功）
-            const displayUserData = {
-              id: `AUTO_${Date.now()}`,
-              name: data.name,
-              age: data.age,
-              phone: data.phone || '未填写',
-              diagnosis: data.diagnosis || '康复训练',
-              lastLogin: new Date().toISOString(),
-              isRecent: true
+            // 实际调用云端创建接口
+            const result = await userDataService.createPatient(cloudUserData)
+            if (result && result.success) {
+              const cloudPatientId = result.patient_id || result.data?.patient_id
+              if (cloudPatientId) {
+                localStorage.setItem('current_patient_id', cloudPatientId)
+                // 合并ID回本地 patientInfo
+                const merged = { ...data, patient_id: cloudPatientId }
+                localStorage.setItem('patientInfo', JSON.stringify(merged))
+                // 更新本地缓存列表，便于刷新后仍可见
+                userDataService.addUserToCache({
+                  id: cloudPatientId,
+                  name: data.name,
+                  age: data.age,
+                  phone: cloudPatientId,
+                  diagnosis: data.diagnosis || '康复训练',
+                  lastLogin: new Date().toISOString(),
+                })
+                console.log('[StandbyView] ✅ 新用户已同步云端并加入缓存')
+              }
+            } else {
+              // 云端失败，至少加入本地缓存以便可见
+              userDataService.addUserToCache({
+                id: pid,
+                name: data.name,
+                age: data.age,
+                phone: pid,
+                diagnosis: data.diagnosis || '康复训练',
+                lastLogin: new Date().toISOString(),
+              })
+              console.warn('[StandbyView] ⚠️ 云端创建失败，已加入本地缓存')
             }
-            
-            // 添加到本地缓存
-            userDataService.addUserToCache(displayUserData)
-            console.log('[StandbyView] ✅ 新用户已添加到本地缓存')
-            
           } catch (uploadError) {
             console.warn('[StandbyView] ⚠️ 云端上传失败，但已保存到本地:', uploadError)
+            // 失败兜底：也加入本地缓存
+            userDataService.addUserToCache({
+              id: pid,
+              name: data.name,
+              age: data.age,
+              phone: pid,
+              diagnosis: data.diagnosis || '康复训练',
+              lastLogin: new Date().toISOString(),
+            })
           }
         }
         

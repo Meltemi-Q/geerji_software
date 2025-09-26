@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="user-selector-overlay">
+  <div v-show="visible" class="user-selector-overlay">
     <div class="user-selector-modal">
       <div class="modal-header">
         <h2>选择用户账户 ({{ totalPatients }}人)</h2>
@@ -52,10 +52,17 @@
           </div>
         </div>
       </div>
+
+      <!-- 当前本地用户提示 -->
+      <div v-if="currentLocalPatient" data-testid="current-user-banner" class="current-user-banner">
+        当前用户：<strong>{{ currentLocalPatient.name || '未命名' }}</strong>
+        <span v-if="currentLocalPatient.age" class="current-user-age">{{ currentLocalPatient.age }}岁</span>
+        <span v-if="currentLocalPatient.lastTime" class="current-user-time">{{ formatDate(currentLocalPatient.lastTime) }}</span>
+      </div>
       
       <!-- 最近用户快捷选择 -->
       <div v-if="!searchKeyword && recentPatients.length" class="recent-quick-select">
-        <h3>📋 快速选择</h3>
+        <h3>📋 最近选择</h3>
         <div class="recent-patients-grid">
           <div v-for="patient in recentPatients.slice(0, 2)" :key="patient.id"
                @click="selectPatient(patient)" class="recent-patient-card">
@@ -86,6 +93,7 @@
 
 <script>
 import { userDataService } from '@/services/UserDataService.js'
+import UserSelectionHistory from '@/services/UserSelectionHistory.js'
 
 export default {
   name: 'SearchableUserSelect',
@@ -94,6 +102,14 @@ export default {
     visible: {
       type: Boolean,
       default: false
+    }
+  },
+  watch: {
+    // 每次打开时强制从云端刷新，保证看到最新数据
+    async visible(v) {
+      if (v) {
+        await this.refreshPatientsFromCloud()
+      }
     }
   },
   
@@ -107,7 +123,8 @@ export default {
       totalPatients: 0,
       isLoading: false,
       loadedCount: 8, // 初始显示8个用户
-      searchTimeout: null
+      searchTimeout: null,
+      currentLocalPatient: null
     }
   },
   
@@ -135,6 +152,102 @@ export default {
   
   methods: {
     /**
+     * 强制从云端刷新患者列表并合并本地当前用户
+     */
+    async refreshPatientsFromCloud() {
+      this.isLoading = true
+      try {
+        this.loadedCount = 8
+        this.allPatients = await userDataService.forceRefreshUserList()
+        // 合并本地当前用户，避免云端暂不同步导致丢失
+        try {
+          const saved = localStorage.getItem('patientInfo')
+          const current = saved ? JSON.parse(saved) : null
+          const localId = localStorage.getItem('current_patient_id') || current?.patient_id
+          if (current && localId) {
+            this.currentLocalPatient = {
+              name: current.name,
+              age: current.age,
+              lastTime: new Date().toISOString()
+            }
+            const exists = this.allPatients.some(p => p.id === localId)
+            if (!exists) {
+              this.allPatients.unshift({
+                id: localId,
+                name: current.name || '未命名',
+                age: current.age || null,
+                phone: localId,
+                diagnosis: current.diagnosis || '康复训练',
+                lastLogin: new Date().toISOString(),
+                isRecent: true
+              })
+            }
+          }
+        } catch (e) {
+          console.warn('[PatientSelector] 合并本地用户失败:', e)
+        }
+        // 基于用户选择历史进行排序（与loadPatients保持一致）
+        try {
+          const nowIso = new Date().toISOString()
+          const currentId = this.currentLocalPatient?.id
+          const recentSelectedIds = UserSelectionHistory.getRecentUserIds(5)
+
+          this.allPatients = (this.allPatients || []).map(p => ({
+            ...p,
+            lastLogin: (p.id === currentId) ? nowIso : p.lastLogin
+          })).sort((a, b) => {
+            // 1. 优先显示最近选择的用户
+            const aRecentIndex = recentSelectedIds.indexOf(a.id)
+            const bRecentIndex = recentSelectedIds.indexOf(b.id)
+
+            if (aRecentIndex !== -1 && bRecentIndex !== -1) {
+              return aRecentIndex - bRecentIndex
+            }
+            if (aRecentIndex !== -1) return -1
+            if (bRecentIndex !== -1) return 1
+
+            // 2. 都不在最近选择中，按训练记录时间排序
+            return new Date(b.lastLogin) - new Date(a.lastLogin)
+          })
+        } catch (e) {}
+
+        this.totalPatients = this.allPatients.length
+        // 标记最近选择的用户
+        const recentSelectedIds = UserSelectionHistory.getRecentUserIds(5)
+        this.allPatients.forEach((p) => { p.isRecent = recentSelectedIds.includes(p.id) })
+
+        // 快速选择显示最近选择的前2个用户（按选择顺序）
+        const quickSelectIds = UserSelectionHistory.getRecentUserIds(2)
+        const recentFromHistory = []
+
+        // 按顺序查找最近选择的用户，保持选择历史的顺序
+        for (const id of quickSelectIds) {
+          const patient = this.allPatients.find(p => p.id === id)
+          if (patient) {
+            recentFromHistory.push(patient)
+          }
+        }
+
+        this.recentPatients = recentFromHistory
+
+        // 如果选择历史不足2个，用最新的用户补充
+        if (this.recentPatients.length < 2) {
+          const needed = 2 - this.recentPatients.length
+          const additionalPatients = this.allPatients
+            .filter(p => !quickSelectIds.includes(p.id))
+            .slice(0, needed)
+          this.recentPatients = [...this.recentPatients, ...additionalPatients]
+        }
+        this.updateDisplayPatients()
+        console.log('[PatientSelector] 🔄 已从云端刷新用户列表')
+      } catch (e) {
+        console.error('[PatientSelector] 云端刷新失败:', e)
+        // 失败则回退用已有列表
+      } finally {
+        this.isLoading = false
+      }
+    },
+    /**
      * 加载用户数据
      */
     async loadPatients() {
@@ -150,15 +263,94 @@ export default {
           this.allPatients = await userDataService.getAllPatients()
         }
         
+        // 合并当前本地登记用户，确保刷新后仍可见
+        try {
+          const saved = localStorage.getItem('patientInfo')
+          const current = saved ? JSON.parse(saved) : null
+          const localId = localStorage.getItem('current_patient_id') || current?.patient_id
+          if (current && localId) {
+            this.currentLocalPatient = {
+              name: current.name,
+              age: current.age,
+              lastTime: new Date().toISOString()
+            }
+            const exists = this.allPatients.some(p => p.id === localId)
+            if (!exists) {
+              this.allPatients.unshift({
+                id: localId,
+                name: current.name || '未命名',
+                age: current.age || null,
+                phone: localId,
+                diagnosis: current.diagnosis || '康复训练',
+                lastLogin: new Date().toISOString(),
+                isRecent: true
+              })
+              console.log('[PatientSelector] 已合并本地当前用户到列表:', localId)
+            }
+          }
+        } catch (e) {
+          console.warn('[PatientSelector] 合并本地用户失败:', e)
+        }
+
+        // 基于用户选择历史进行排序（最近选择的用户优先显示）
+        try {
+          const nowIso = new Date().toISOString()
+          const currentId = this.currentLocalPatient?.id
+          const recentSelectedIds = UserSelectionHistory.getRecentUserIds(5)
+
+          // 更新当前用户的时间并根据选择历史排序
+          this.allPatients = (this.allPatients || []).map(p => ({
+            ...p,
+            lastLogin: (p.id === currentId) ? nowIso : p.lastLogin
+          })).sort((a, b) => {
+            // 1. 优先显示最近选择的用户
+            const aRecentIndex = recentSelectedIds.indexOf(a.id)
+            const bRecentIndex = recentSelectedIds.indexOf(b.id)
+
+            if (aRecentIndex !== -1 && bRecentIndex !== -1) {
+              // 都在最近选择中，按选择顺序排序
+              return aRecentIndex - bRecentIndex
+            }
+            if (aRecentIndex !== -1) return -1  // a在最近选择中，排前面
+            if (bRecentIndex !== -1) return 1   // b在最近选择中，排前面
+
+            // 2. 都不在最近选择中，按训练记录时间排序（原有逻辑）
+            return new Date(b.lastLogin) - new Date(a.lastLogin)
+          })
+        } catch (e) {
+          console.error('[PatientSelector] 排序处理失败:', e)
+        }
+
         this.totalPatients = this.allPatients.length
-        
-        // 标记最近用户
-        const recentCount = Math.min(5, this.allPatients.length)
-        this.allPatients.forEach((patient, index) => {
-          patient.isRecent = index < recentCount
+
+        // 标记最近选择的用户
+        const recentSelectedIds = UserSelectionHistory.getRecentUserIds(5)
+        this.allPatients.forEach((patient) => {
+          patient.isRecent = recentSelectedIds.includes(patient.id)
         })
-        
-        this.recentPatients = this.allPatients.slice(0, recentCount)
+
+        // 快速选择显示最近选择的前2个用户（按选择顺序）
+        const quickSelectIds = UserSelectionHistory.getRecentUserIds(2)
+        const recentFromHistory = []
+
+        // 按顺序查找最近选择的用户，保持选择历史的顺序
+        for (const id of quickSelectIds) {
+          const patient = this.allPatients.find(p => p.id === id)
+          if (patient) {
+            recentFromHistory.push(patient)
+          }
+        }
+
+        this.recentPatients = recentFromHistory
+
+        // 如果选择历史不足2个，用最新的用户补充
+        if (this.recentPatients.length < 2) {
+          const needed = 2 - this.recentPatients.length
+          const additionalPatients = this.allPatients
+            .filter(p => !quickSelectIds.includes(p.id))
+            .slice(0, needed)
+          this.recentPatients = [...this.recentPatients, ...additionalPatients]
+        }
         this.updateDisplayPatients()
         
         console.log(`[PatientSelector] ✅ 加载完成：${this.totalPatients}个用户`)
@@ -262,7 +454,10 @@ export default {
       
       try {
         console.log(`[PatientSelector] 选择用户: ${patient.name} (${patient.id})`)
-        
+
+        // 记录用户选择历史
+        UserSelectionHistory.recordSelection(patient.id, patient.name)
+
         // 获取用户详细信息
         const fullProfile = await userDataService.getPatientDetail(patient.id)
         
@@ -343,20 +538,25 @@ export default {
      */
     formatDate(dateStr) {
       if (!dateStr) return ''
-      
+
       try {
         const date = new Date(dateStr)
         const now = new Date()
         const diffDays = Math.floor((now - date) / (24 * 60 * 60 * 1000))
-        
+
         if (diffDays === 0) return '今天记录'
         if (diffDays === 1) return '昨天记录'
         if (diffDays < 7) return `${diffDays}天前`
-        
-        return date.toLocaleDateString('zh-CN', { 
-          month: '2-digit', 
-          day: '2-digit' 
-        }) + '记录'
+
+        // 对于较旧的记录，显示月日+时分，帮助用户区分同一天的不同记录
+        return date.toLocaleDateString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit'
+        }) + ' ' + date.toLocaleTimeString('zh-CN', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        })
       } catch (e) {
         return '历史记录'
       }
@@ -366,6 +566,26 @@ export default {
 </script>
 
 <style scoped>
+/* 当前用户提示 */
+.current-user-banner {
+  margin: 10px 0 16px 0;
+  padding: 10px 14px;
+  background: #f0f9ff;
+  color: #0c4a6e;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.current-user-age {
+  color: #64748b;
+  margin-left: 8px;
+}
+
+.current-user-time {
+  color: #94a3b8;
+  margin-left: 8px;
+  font-size: 12px;
+}
 /* 遮罩层 */
 .user-selector-overlay {
   position: fixed;

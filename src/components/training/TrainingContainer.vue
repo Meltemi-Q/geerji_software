@@ -23,22 +23,8 @@
 
       <!-- 中间显示区域 - 根据模式切换组件 -->
       <div class="center-display" :class="{ 'curve-mode': displayMode === 'curve' }">
-        <BrainModeView 
-          v-if="displayMode === 'brain'"
-          :hbo-data="hboData"
-          :hbr-data="hbrData"
-          :current-values="currentValues"
-        />
-        
-        <HeatmapModeView 
-          v-else-if="displayMode === 'heatmap'"
-          :hbo-data="hboData"
-          :hbr-data="hbrData"
-          :current-values="currentValues"
-        />
-        
         <CurveModeView 
-          v-else-if="displayMode === 'curve'"
+          v-if="displayMode === 'curve'"
           :hbo-data="hboData"
           :hbr-data="hbrData"
           :current-values="currentValues"
@@ -48,11 +34,11 @@
         />
         
         <GameModeView 
-          v-else-if="displayMode === 'game'"
+          v-else
           :current-values="currentValues"
           :hbo-data="hboData"
           :hbr-data="hbrData"
-          @exit-game="switchMode('heatmap')"
+          @exit-game="switchMode('curve')"
           @coin-collected="onCoinCollected"
         />
       </div>
@@ -77,8 +63,6 @@
 import { ref } from 'vue'
 import ModeSelector from './controls/ModeSelector.vue'
 import TrainingControls from './controls/TrainingControls.vue'
-import BrainModeView from './modes/BrainModeView.vue'
-import HeatmapModeView from './modes/HeatmapModeView.vue'
 import CurveModeView from './modes/CurveModeView.vue'
 import GameModeView from './modes/GameModeView.vue'
 import { trainingCommon } from './mixins/TrainingCommon.js'
@@ -88,8 +72,6 @@ export default {
   components: {
     ModeSelector,
     TrainingControls,
-    BrainModeView,
-    HeatmapModeView,
     CurveModeView,
     GameModeView
   },
@@ -158,7 +140,7 @@ export default {
   ],
   setup() {
     // 模式切换相关
-    const displayMode = ref('brain') // 默认专业大脑模式
+    const displayMode = ref('game') // 默认游戏模式，用户进入训练直接显示游戏界面
     
     // 使用共享逻辑
     const { formatDuration } = trainingCommon()

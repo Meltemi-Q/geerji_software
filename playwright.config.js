@@ -7,7 +7,7 @@ export default defineConfig({
   retries: 0,
   use: {
     headless: true,
-    baseURL: 'http://localhost:3001',
+    baseURL: 'http://localhost:3002',
     viewport: { width: 1280, height: 800 },
     ignoreHTTPSErrors: true,
     actionTimeout: 10_000,
@@ -17,8 +17,8 @@ export default defineConfig({
     screenshot: 'only-on-failure'
   },
   webServer: {
-    command: 'npm run dev -- --port 3001',
-    url: 'http://localhost:3001',
+    command: 'npm run dev:3002',
+    url: 'http://localhost:3002',
     reuseExistingServer: true,
     timeout: 120_000
   }

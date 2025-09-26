@@ -55,19 +55,18 @@
           </div>
         </div>
 
-        <!-- 左下角：专业大脑热力图 -->
+        <!-- 左下角：脑区活跃热力图（简化显示） -->
         <div class="grid-card brain-heatmap-card">
           <div class="card-header">
-            <h3 class="card-title">脑区活跃度热力图</h3>
+            <h3 class="card-title">脑区活跃热力图</h3>
           </div>
           <div class="card-content brain-content">
-            <!-- 专业大脑模式颜色条 -->
             <div class="brain-colorbar-compact">
               <div class="colorbar-gradient-compact"></div>
               <div class="colorbar-labels-compact">
-                <span>-0.05</span>
-                <span>0.00</span>
-                <span>+0.05</span>
+                <span>-1.0</span>
+                <span>0</span>
+                <span>+1.0</span>
               </div>
             </div>
             <div ref="brainHeatmapRef" class="brain-heatmap"></div>
@@ -164,54 +163,25 @@
 <script>
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import * as echarts from 'echarts/core'
-import { HeatmapChart, CustomChart, LineChart } from 'echarts/charts'
+import { LineChart } from 'echarts/charts'
 import { 
   GridComponent, 
   TooltipComponent, 
-  TitleComponent,
-  VisualMapComponent
+  TitleComponent
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { HeatmapRenderer } from '../utils/HeatmapRenderer.js'
-import { 
-  loadTriangleLayoutData, 
-  createTriangleFnirsInfo,
-  createChannelMapping 
-} from '../utils/fnirsLayout.js'
 import { captureAssessment } from '../utils/screenshotCapture.js'
 import { sessionManager } from '../services/sessionManager.js'
 import { cloudAPI } from '../services/geerjiCloudAPI.js'
 
-// 加载配置（默认值，支持配置化）
-const defaultConfig = {
-  flipYForReport: false,
-  idwPower: 2,
-  scaleClampStrategy: "default",
-  minScaleGuard: false,
-  maskAlpha: 0.3
-}
-
-// 尝试加载外部配置
-let heatmapConfig = defaultConfig
-try {
-  // 功能1：启用外部配置加载支持
-  const configResponse = await fetch('/heatmap_renderer_config.json')
-  const externalConfig = await configResponse.json()
-  heatmapConfig = { ...defaultConfig, ...externalConfig.config }
-  console.log('已加载外部配置:', heatmapConfig)
-} catch (error) {
-  console.log('使用默认配置:', error.message)
-}
+// 无热力图配置，保留时间曲线能力
 
 // 注册ECharts组件
 echarts.use([
-  HeatmapChart,
-  CustomChart,
   LineChart,
   GridComponent, 
   TooltipComponent, 
   TitleComponent,
-  VisualMapComponent,
   CanvasRenderer
 ])
 
@@ -222,10 +192,6 @@ export default {
   },
   emits: ['new-training', 'save-record', 'return-standby'],
   props: {
-    combinedHeatmap: {
-      type: Array,
-      required: true
-    },
     brainActivityScore: {
       type: Object,
       required: true
@@ -252,9 +218,6 @@ export default {
     })
     
     let timeCurveChart = null
-    let brainHeatmapChart = null
-    // 功能1：传入配置参数到HeatmapRenderer构造函数
-    const heatmapRenderer = new HeatmapRenderer(heatmapConfig)
     
     // 康复建议数据结构
     const rehabilitationContent = {
@@ -489,207 +452,23 @@ export default {
       return chart
     }
 
-    // 创建专业大脑热力图（使用双Canvas分层）
+    // 创建简化版大脑显示（仅显示底图）
     async function createBrainHeatmap(container) {
       if (!container) return null
-      
-      console.log('[评估界面-大脑显示] 创建简单大脑图片显示')
-      
-      // 创建图片元素
       const img = document.createElement('img')
       img.style.width = '100%'
       img.style.height = '100%'
       img.style.objectFit = 'contain'
       img.style.objectPosition = 'center'
-      
-      // 清空容器并添加图片
       container.innerHTML = ''
-      container.style.position = 'relative'
       container.style.display = 'flex'
       container.style.alignItems = 'center'
       container.style.justifyContent = 'center'
       container.appendChild(img)
-      
-      // 加载大脑图片
-      img.onload = () => {
-        console.log('[评估界面-大脑显示] brain_no_bg.png 加载成功')
-      }
-      
-      img.onerror = () => {
-        console.warn('[评估界面-大脑显示] brain_no_bg.png 加载失败')
-        container.innerHTML = '<div style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: #666;">大脑图片加载失败</div>'
-      }
-      
-      // 设置图片源
       img.src = new URL('../assets/brain_no_bg.png', import.meta.url).href
-      
       return { img }
     }
-    
-    // 绘制大脑背景图（只执行一次）
-    function drawBrainBackgroundOnce(ctx, size, brainChart, fnirsInfo) {
-      const img = new Image()
-      img.onload = () => {
-        console.log(`[评估界面-大脑热力图] 图片加载成功: ${img.naturalWidth}x${img.naturalHeight}`)
-        
-        // 清空背景画布
-        ctx.clearRect(0, 0, size, size)
-        
-        // **修复变形问题**：计算等比缩放尺寸，保持原始宽高比
-        const maxSize = size * 0.8
-        const aspectRatio = img.naturalWidth / img.naturalHeight
-        
-        let imgWidth, imgHeight
-        if (aspectRatio > 1) {
-          imgWidth = maxSize
-          imgHeight = maxSize / aspectRatio
-        } else {
-          imgHeight = maxSize
-          imgWidth = maxSize * aspectRatio
-        }
-        
-        const imgX = (size - imgWidth) / 2
-        const imgY = (size - imgHeight) / 2
-        
-        // 使用正确的宽高比绘制图片，避免变形
-        ctx.drawImage(img, imgX, imgY, imgWidth, imgHeight)
-        
-        // 设置brainRect用于热力图坐标映射（使用真实的图片尺寸和位置）
-        brainChart.brainRect = { x: imgX, y: imgY, width: imgWidth, height: imgHeight }
-        console.log('[评估界面-大脑热力图] brainRect设置完成:', brainChart.brainRect)
-        
-        // 背景加载完成后，立即绘制热力图
-        drawHeatmapOverlay(brainChart, fnirsInfo)
-      }
-      
-      img.onerror = () => {
-        console.warn('[评估界面-大脑热力图] 大脑图像加载失败，使用备用方案')
-        
-        // 使用简单的圆形背景
-        const centerX = size / 2
-        const centerY = size / 2
-        const radius = size * 0.4
-        
-        ctx.fillStyle = 'rgba(100, 116, 139, 0.1)'
-        ctx.beginPath()
-        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI)
-        ctx.fill()
-        
-        // **修复变形问题**：设置默认brainRect保持比例
-        const imgSize = size * 0.95
-        const offsetX = (size - imgSize) / 2
-        const offsetY = (size - imgSize) / 2
-        brainChart.brainRect = { x: offsetX, y: offsetY, width: imgSize, height: imgSize }
-        
-        // 绘制热力图
-        drawHeatmapOverlay(brainChart, fnirsInfo)
-      }
-      
-      // 尝试加载大脑图片（使用brain_no_bg.png）
-      img.src = new URL('../assets/brain_no_bg.png', import.meta.url).href
-    }
-    
-    // 绘制热力图覆盖层
-    function drawHeatmapOverlay(brainChart, fnirsInfo) {
-      if (!brainChart || !brainChart.brainRect) {
-        console.warn('[评估界面-大脑热力图] brainRect未设置，无法绘制热力图')
-        return
-      }
-      
-      console.log('[评估界面-大脑热力图] 开始绘制热力图覆盖')
-      
-      const { heatmapCtx, size, brainRect } = brainChart
-      
-      // 清空热力图Canvas
-      heatmapCtx.clearRect(0, 0, size, size)
-      
-      // 生成简单的演示数据
-      const channelValues = []
-      const channelCount = fnirsInfo.pairs.Src.length
-      
-      for (let i = 0; i < channelCount; i++) {
-        // 基于训练总结创建综合数据
-        const hboContribution = props.trainingSummary.avgHboChange * (0.8 + Math.random() * 0.4)
-        const hbrContribution = props.trainingSummary.avgHbrChange * (0.8 + Math.random() * 0.4)
-        
-        // 综合血氧变化
-        const spatialVariation = Math.sin(i * 0.5) * 0.3
-        channelValues[i] = (hboContribution - hbrContribution * 0.5) * (1 + spatialVariation)
-      }
-      
-      // 使用HeatmapRenderer生成热力图数据
-      const heatmapResult = heatmapRenderer.generateContinuousHeatmap(fnirsInfo, channelValues)
-      
-      if (!heatmapResult || !heatmapResult.gridData || heatmapResult.gridData.length === 0) {
-        console.warn('[评估界面-大脑热力图] 热力图数据生成失败')
-        return
-      }
-      
-      console.log(`[评估界面-大脑热力图] 生成热力图数据点数: ${heatmapResult.gridData.length}`)
-      
-      // 计算数据范围
-      const values = heatmapResult.gridData.map(point => point[2]).filter(v => !isNaN(v))
-      if (values.length === 0) return
-      
-      const minVal = Math.min(...values)
-      const maxVal = Math.max(...values)
-      const maxAbs = Math.max(Math.abs(minVal), Math.abs(maxVal)) || 0.05
-      
-      // 绘制热力图点
-      const gridSize = heatmapRenderer.gridSize
-      const xStep = 2 / gridSize
-      const yStep = 2 / gridSize
-      
-      for (const [gridI, gridJ, value] of heatmapResult.gridData) {
-        // 坐标转换：网格索引转换为实际坐标
-        const realX = -1 + gridJ * xStep + xStep / 2
-        const realY = -1 + gridI * yStep + yStep / 2
-        
-        // 映射到brainRect坐标
-        const canvasX = Math.floor(brainRect.x + (realX + 1) / 2 * brainRect.width)
-        const canvasY = Math.floor(brainRect.y + (realY + 1) / 2 * brainRect.height)
-        
-        // 边界检查
-        if (canvasX < brainRect.x || canvasX >= brainRect.x + brainRect.width || 
-            canvasY < brainRect.y || canvasY >= brainRect.y + brainRect.height) {
-          continue
-        }
-        
-        // 计算颜色（红蓝温度映射）
-        const normalizedValue = maxAbs > 0 ? value / maxAbs : 0
-        const clampedValue = Math.max(-1, Math.min(1, normalizedValue))
-        
-        let r, g, b
-        if (clampedValue > 0) {
-          // 正值：蓝色到红色
-          r = Math.floor(255 * clampedValue)
-          g = 0
-          b = Math.floor(255 * (1 - clampedValue))
-        } else {
-          // 负值：蓝色到黑色
-          const absValue = Math.abs(clampedValue)
-          r = 0
-          g = 0
-          b = Math.floor(255 * absValue)
-        }
-        
-        // 绘制热力图点（增强显示效果）
-        const alpha = 0.9
-        // 创建径向渐变，让每个点有自然扩散效果
-        const gradient = heatmapCtx.createRadialGradient(canvasX, canvasY, 0, canvasX, canvasY, 15)
-        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${alpha})`)
-        gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${alpha * 0.7})`)
-        gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${alpha * 0.4})`)
-        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`)
-        
-        heatmapCtx.fillStyle = gradient
-        heatmapCtx.fillRect(canvasX - 15, canvasY - 15, 30, 30) // 更大的覆盖范围，确保热力图完整显示
-      }
-      
-      console.log('[评估界面-大脑热力图] 热力图覆盖绘制完成')
-    }
-    
-    
+
     // 格式化数值
     function formatValue(value) {
       return value >= 0 ? `+${value.toFixed(3)}` : value.toFixed(3)
@@ -746,7 +525,7 @@ export default {
             assessment_text: props.assessmentText
           },
           screenshot_uploaded: uploadResult.success,
-          combined_heatmap_data: props.combinedHeatmap
+          // 去除 combined_heatmap_data
         }
         
         const sessionResult = await sessionManager.endSession(sessionData)
@@ -797,11 +576,9 @@ export default {
         if (timeCurveRef.value) {
           timeCurveChart = createTimeCurve(timeCurveRef.value)
         }
-        
         if (brainHeatmapRef.value) {
-          brainHeatmapChart = await createBrainHeatmap(brainHeatmapRef.value)
+          await createBrainHeatmap(brainHeatmapRef.value)
         }
-        
         // 窗口大小变化时重绘
         window.addEventListener('resize', handleResize)
       })
@@ -810,7 +587,6 @@ export default {
     // 处理窗口大小变化
     function handleResize() {
       if (timeCurveChart) timeCurveChart.resize()
-      if (brainHeatmapChart) brainHeatmapChart.resize()
     }
     
     // 监听训练总结数据变化
@@ -819,9 +595,6 @@ export default {
         // 重新创建图表
         if (timeCurveRef.value) {
           timeCurveChart = createTimeCurve(timeCurveRef.value)
-        }
-        if (brainHeatmapRef.value) {
-          brainHeatmapChart = await createBrainHeatmap(brainHeatmapRef.value)
         }
       }
     }, { deep: true })
@@ -1108,27 +881,41 @@ export default {
 }
 
 .brain-content {
-  justify-content: space-between; /* 充分利用空间 */
+  justify-content: flex-start;
   align-items: center;
-  gap: clamp(5px, 1vh, 10px); /* 最小间距 */
-  padding: clamp(5px, 1vh, 10px);
+  gap: 10px;
   flex: 1;
+  padding: 0;
 }
 
+.brain-heatmap {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  max-height: 100%;
+  min-height: clamp(150px, 18vh, 240px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex: 1 1 0;
+}
+
+/* 左下角颜色条与刻度（历史类名还原） */
 .brain-colorbar-compact {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: clamp(3px, 0.5vh, 5px); /* 更紧凑的颜色条 */
-  flex-shrink: 0;
+  gap: 5px;
+  margin-right: 12px;
 }
 
 .colorbar-gradient-compact {
-  width: clamp(120px, 20vw, 180px); /* 响应式宽度 */
-  height: clamp(8px, 1vh, 12px); /* 更小高度 */
-  background: linear-gradient(to right, 
-    #313695 0%, #4575b4 20%, #74add1 40%, #abd9e9 50%, 
-    #e0f3f8 60%, #ffffbf 70%, #fee090 80%, #fdae61 90%, 
+  width: 180px;
+  height: 12px;
+  background: linear-gradient(to right,
+    #313695 0%, #4575b4 20%, #74add1 40%, #abd9e9 50%,
+    #e0f3f8 60%, #ffffbf 70%, #fee090 80%, #fdae61 90%,
     #f46d43 95%, #d73027 100%);
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.3);
@@ -1137,27 +924,9 @@ export default {
 .colorbar-labels-compact {
   display: flex;
   justify-content: space-between;
-  width: clamp(120px, 20vw, 180px);
-  font-size: clamp(10px, 1.2vh, 14px); /* 更小字体 */
-  color: rgba(255, 255, 255, 0.8);
-  font-weight: 500;
-}
-
-.brain-heatmap {
-  width: auto;
-  height: 100%;
-  aspect-ratio: 1; /* 强制保持1:1宽高比 */
-  max-width: min(clamp(120px, 20vh, 200px), 80%); /* 双重限制 */
-  max-height: clamp(120px, 20vh, 200px);
-  background: transparent;
-  border-radius: 12px;
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  flex: 1;
-  object-fit: contain; /* 确保图片完整显示 */
+  width: 180px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
 }
 
 /* 右下角：康复建议卡片 */
@@ -1408,7 +1177,7 @@ export default {
   .brain-heatmap-card {
     grid-row: 3;
   }
-  
+
   .recovery-advice-card {
     grid-row: 4;
   }
@@ -1465,11 +1234,10 @@ export default {
   .assessment-status-card {
     grid-row: 2;
   }
-  
   .brain-heatmap-card {
     grid-row: 3;
   }
-  
+
   .recovery-advice-card {
     grid-row: 4;
   }

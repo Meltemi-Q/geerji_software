@@ -70,22 +70,9 @@ export function trainingCommon() {
     } : null
   }
 
-  // 获取热力图颜色
-  function getHeatmapColor(normalizedValue) {
-    // 归一化值转换为颜色 (-1到1映射到蓝色到红色)
-    const clampedValue = Math.max(-1, Math.min(1, normalizedValue))
-    
-    if (clampedValue < 0) {
-      // 负值：白色到蓝色
-      const intensity = Math.abs(clampedValue)
-      const blue = Math.floor(255 * intensity)
-      return `rgb(${255 - blue}, ${255 - blue}, 255)`
-    } else {
-      // 正值：白色到红色  
-      const intensity = clampedValue
-      const red = Math.floor(255 * intensity)
-      return `rgb(255, ${255 - red}, ${255 - red})`
-    }
+  // 占位：移除热力图相关后，保留空实现避免对颜色映射的依赖
+  function getHeatmapColor() {
+    return '#cccccc'
   }
 
   // 格式化百分比

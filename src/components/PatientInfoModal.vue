@@ -1,5 +1,5 @@
 <template>
-  <div class="patient-modal-overlay" @click.self="$emit('close')">
+  <div v-show="visible" class="patient-modal-overlay" @click.self="$emit('close')">
     <div class="patient-modal-container">
       <!-- 弹窗头部 -->
       <div class="modal-header">
@@ -365,10 +365,16 @@
 
 <script>
 import { ref, computed, nextTick } from 'vue'
-import { cloudAPI } from '@/services/geerjiCloudAPI.js'
+import { userDataService } from '@/services/UserDataService.js'
 
 export default {
   name: 'PatientInfoModal',
+  props: {
+    visible: {
+      type: Boolean,
+      default: false
+    }
+  },
   emits: ['close', 'save'],
   setup(props, { emit }) {
     const currentStep = ref(1)
@@ -610,7 +616,7 @@ export default {
 
         // 2. 云端上传用户档案
         console.log('[用户信息] 开始上传到戈尔基云端')
-        const uploadResult = await cloudAPI.uploadPatientProfile(data)
+        const uploadResult = await userDataService.createPatient(data)
 
         if (uploadResult.success) {
           console.log('[用户信息] 云端上传成功:', uploadResult.patient_id)

@@ -50,6 +50,34 @@
         </div>
       </div>
     </div>
+
+    <!-- 速度控制 -->
+    <div class="speed-control">
+      <div class="speed-label">
+        <div class="control-icon">⚡</div>
+        <span>游戏速度</span>
+      </div>
+      <div class="speed-buttons">
+        <button
+          @click="$emit('speed-change', 'low')"
+          :class="{ active: currentSpeed === 'low' }"
+          class="speed-btn speed-low">
+          低速
+        </button>
+        <button
+          @click="$emit('speed-change', 'medium')"
+          :class="{ active: currentSpeed === 'medium' }"
+          class="speed-btn speed-medium">
+          中速
+        </button>
+        <button
+          @click="$emit('speed-change', 'high')"
+          :class="{ active: currentSpeed === 'high' }"
+          class="speed-btn speed-high">
+          高速
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -80,8 +108,13 @@ export default {
     collectionActive: {
       type: Boolean,
       default: false
+    },
+    currentSpeed: {
+      type: String,
+      default: 'medium'
     }
-  }
+  },
+  emits: ['speed-change']
 }
 </script>
 
@@ -245,5 +278,73 @@ export default {
   .oxygen-value {
     font-size: 14px;
   }
+}
+
+/* 速度控制 */
+.speed-control {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.speed-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 600;
+}
+
+.control-icon {
+  font-size: 14px;
+}
+
+.speed-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.speed-btn {
+  flex: 1;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(5px);
+}
+
+.speed-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  transform: translateY(-1px);
+}
+
+.speed-btn.active {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+  border-color: #4facfe;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(79, 172, 254, 0.3);
+}
+
+.speed-low.active {
+  background: linear-gradient(135deg, #81c784 0%, #4caf50 100%);
+  border-color: #4caf50;
+  box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+}
+
+.speed-high.active {
+  background: linear-gradient(135deg, #ff7043 0%, #f44336 100%);
+  border-color: #f44336;
+  box-shadow: 0 2px 8px rgba(244, 67, 54, 0.3);
 }
 </style>

@@ -1,13 +1,8 @@
 <template>
   <div class="tablet-app">
-    <!-- HM测试页面 -->
-    <HeatmapTestView 
-      v-if="appState === 'hm-test'"
-    />
-    
     <!-- 训练界面 -->
     <TrainingContainer 
-      v-else-if="appState === 'training'"
+      v-if="appState === 'training'"
       :hbo-data="hboData"
       :hbr-data="hbrData"
       :current-values="currentValues"
@@ -30,7 +25,6 @@
     <!-- 训练结束后的评估界面 -->
     <AssessmentView 
       v-else-if="appState === 'assessment'"
-      :combined-heatmap="combinedHeatmap"
       :brain-activity-score="brainActivityScore"
       :assessment-text="assessmentText"
       :training-summary="trainingSummary"
@@ -49,10 +43,9 @@
 
 <script>
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import TrainingContainer from './components/training/TrainingContainer.vue' // 新的模块化训练容器
+import TrainingContainer from './components/training/TrainingContainer.vue'
 import AssessmentView from './components/AssessmentView.vue'
 import StandbyView from './components/StandbyView.vue'
-import HeatmapTestView from './components/HeatmapTestView.vue' // HM测试页面
 import { sessionManager } from './services/sessionManager.js'
 import { userDataService } from './services/UserDataService.js'
 
@@ -61,11 +54,10 @@ export default {
   components: {
     TrainingContainer,
     AssessmentView,
-    StandbyView,
-    HeatmapTestView
+    StandbyView
   },
   setup() {
-    // 应用状态：'standby', 'training', 'assessment', 'hm-test'
+    // 应用状态：'standby', 'training', 'assessment'
     const appState = ref('standby')
     
     // 检查URL路径和Hash，支持直接导航
@@ -75,13 +67,8 @@ export default {
       
       console.log('[App] 路由检查:', { path, hash, currentAppState: appState.value })
       
-      // 支持 /hm 路径或 #hm hash
-      if (path === '/hm' || hash === '#hm') {
-        console.log('[App] 切换到HM测试模式')
-        appState.value = 'hm-test'
-      }
       // 支持 #training hash 直接进入训练模式
-      else if (hash === '#training') {
+      if (hash === '#training') {
         if (appState.value !== 'training') {
           console.log('[App] 直接进入训练模式 (首次)')
           appState.value = 'training'
@@ -192,7 +179,7 @@ export default {
     })
     
     // 综合热力图数据 (训练结束后)
-    const combinedHeatmap = ref(null)
+    // 移除综合热力图数据
     
     // 历史数据存储（10秒滚动窗口）
     const dataHistory = ref([])
@@ -226,8 +213,8 @@ export default {
     let dataUpdateTimer = null
     let trainingStartMs = null
     
-    // fNIRS API配置（从环境变量读取，默认8091）
-    const FNIRS_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8091'
+    // fNIRS API配置（从环境变量读取，默认8090）
+    const FNIRS_API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8090'
     
     /**
      * 从Python SDK服务器获取真实fNIRS数据
@@ -316,12 +303,31 @@ export default {
         hbrStats: stats?.hbr_stats || null
       }
       
-      // 添加新数据帧（保持数据累积，不删除历史数据）
+      // 【内存泄漏修复】限制历史数据量，防止内存无限增长
+      const MAX_HISTORY_SIZE = 1500 // 约3分钟数据（8Hz * 180秒）
+
+      if (dataHistory.value.length >= MAX_HISTORY_SIZE) {
+        // 删除最旧的数据，保持队列大小
+        const removeCount = dataHistory.value.length - MAX_HISTORY_SIZE + 100 // 一次性删除多一些，减少清理频率
+        dataHistory.value.splice(0, removeCount)
+
+        console.log(`[内存管理] 清理历史数据 ${removeCount} 条，当前保留 ${dataHistory.value.length} 条`)
+
+        // 更新时间选择范围索引（因为删除了前面的数据）
+        selectedTimeRange.value.start = Math.max(0, selectedTimeRange.value.start - removeCount)
+        selectedTimeRange.value.end = Math.max(0, selectedTimeRange.value.end - removeCount)
+      }
+
+      // 添加新数据帧
       dataHistory.value.push(historyFrame)
-      
-      // 【修复】：保持数据累积存储，让图表显示时动态切片
-      // 不再删除历史数据，让数据持续累积以支持滚动曲线显示
-      console.log(`[数据累积] 存储第${dataHistory.value.length}帧，总时长: ${((now - (dataHistory.value[0]?.recordTime || now)) / 1000).toFixed(1)}秒`)
+
+      // 定期内存使用检查（每100帧检查一次）
+      if (dataHistory.value.length % 100 === 0) {
+        const memoryUsage = performance.memory ? (performance.memory.usedJSHeapSize / 1024 / 1024).toFixed(1) : 'N/A'
+        console.log(`[内存监控] Frame ${dataHistory.value.length}, Memory: ${memoryUsage}MB, History: ${dataHistory.value.length} frames`)
+      }
+
+      console.log(`[数据存储] 存储第${dataHistory.value.length}帧，总时长: ${((now - (dataHistory.value[0]?.recordTime || now)) / 1000).toFixed(1)}秒`)
       
       console.log('[历史数据存储] 数据帧已存储，当前历史长度:', dataHistory.value.length)
       
@@ -663,7 +669,7 @@ export default {
             training_summary: trainingSummary.value,
             brain_activity_score: brainActivityScore.value,
             assessment_text: assessmentText.value,
-            combined_heatmap: combinedHeatmap.value,
+            // combined_heatmap 已移除
             timestamp: new Date().toISOString(),
             record_type: 'offline_manual_save',
             patient_id: localStorage.getItem('current_patient_id'),
@@ -703,10 +709,7 @@ export default {
           },
           
           // 热力图数据 (如果有的话)
-          heatmap_data: combinedHeatmap.value ? {
-            data: combinedHeatmap.value,
-            timestamp: new Date().toISOString()
-          } : null,
+          // heatmap_data 已移除
           
           // 会话信息
           session_info: sessionStatus.session,
@@ -892,16 +895,9 @@ export default {
     async function generateAssessmentData() {
       // 生成综合热力图 - 使用真实fNIRS数据
       try {
-        const finalData = await fetchRealFNIRSData()
-        // 合成综合热力图数据（HbO + HbR的加权组合）
-        combinedHeatmap.value = finalData.hboData.map((hbo, index) => {
-          const hbr = finalData.hbrData[index]
-          return hbo + (hbr * 0.6) // HbO权重更高，符合生理特征
-        })
+        await fetchRealFNIRSData()
       } catch (error) {
-        console.warn('[评估数据] API调用失败，使用备用数据:', error)
-        // 备用数据
-        combinedHeatmap.value = generateRealisticFNIRSData(0.02, 'hbo')
+        console.warn('[评估数据] API调用失败，跳过热力图合成:', error)
       }
       
       // 更新训练总结
@@ -936,6 +932,15 @@ export default {
       timeUpdateTimer = setInterval(() => {
         currentTime.value = new Date().toLocaleTimeString()
       }, 1000)
+
+      // 自动启动训练（确保数据流联通后端）
+      try {
+        if (!trainingStatus.value.isTraining) {
+          await startTraining()
+        }
+      } catch (e) {
+        console.warn('[自动启动训练] 失败:', e)
+      }
     })
     
     onUnmounted(() => {
@@ -959,7 +964,6 @@ export default {
       hboData,
       hbrData,
       currentValues,
-      combinedHeatmap,
       brainActivityScore,
       assessmentText,
       trainingSummary,

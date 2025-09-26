@@ -2,33 +2,9 @@
   <div class="left-sidebar">
     <div class="sidebar-title">显示模式</div>
     <div class="mode-buttons-vertical">
-      <button 
-        class="large-mode-btn" 
-        :class="{ active: displayMode === 'brain' }"
-        @click="$emit('switch-mode', 'brain')"
-      >
-        <svg width="32" height="32" class="mode-icon-large">
-          <path d="M16 4C10 4 5 9 5 15c0 3 1.5 6 3.5 8C9 24.5 10 26 10 28h12c0-2 1-3.5 1.5-4.5C26 21 27.5 18 27.5 15c0-6-5-11-11.5-11z" fill="none" stroke="currentColor" stroke-width="2"/>
-          <circle cx="12" cy="13" r="1.5" fill="currentColor"/>
-          <circle cx="20" cy="13" r="1.5" fill="currentColor"/>
-        </svg>
-        <span>脑图</span>
-      </button>
-      
-      <button 
-        class="large-mode-btn" 
-        :class="{ active: displayMode === 'curve' }"
-        @click="$emit('switch-mode', 'curve')"
-      >
-        <svg width="32" height="32" class="mode-icon-large">
-          <path d="M4 16L8 12L16 18L28 8" stroke="currentColor" stroke-width="2" fill="none"/>
-          <path d="M28 8L22 8L22 14" stroke="currentColor" stroke-width="2" fill="none"/>
-        </svg>
-        <span>数据曲线</span>
-      </button>
-      
-      <button 
-        class="large-mode-btn" 
+      <!-- 交互游戏按钮置顶 -->
+      <button
+        class="large-mode-btn"
         :class="{ active: displayMode === 'game' }"
         @click="$emit('switch-mode', 'game')"
       >
@@ -40,6 +16,21 @@
         </svg>
         <span>交互游戏</span>
       </button>
+
+      <!-- 数据曲线 -->
+      <button
+        class="large-mode-btn"
+        :class="{ active: displayMode === 'curve' }"
+        @click="$emit('switch-mode', 'curve')"
+      >
+        <svg width="32" height="32" class="mode-icon-large">
+          <path d="M4 16L8 12L16 18L28 8" stroke="currentColor" stroke-width="2" fill="none"/>
+          <path d="M28 8L22 8L22 14" stroke="currentColor" stroke-width="2" fill="none"/>
+        </svg>
+        <span>数据曲线</span>
+      </button>
+
+      <!-- 脑图按钮已隐藏 -->
     </div>
   </div>
 </template>
