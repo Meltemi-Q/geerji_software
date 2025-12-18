@@ -4,13 +4,14 @@ import path from 'path'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiTarget = env.VITE_PROXY_API_TARGET || 'http://36.134.11.254:5002'
+  const apiTarget = env.VITE_PROXY_API_TARGET || 'http://36.134.11.254:5000'
 
   return {
     plugins: [vue()],
     server: {
       port: 3000,
       host: '0.0.0.0',
+      allowedHosts: ['geerji.cpolar.cn'],
       proxy: {
         '/api': {
           target: apiTarget,

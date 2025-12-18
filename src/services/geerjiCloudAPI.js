@@ -1,15 +1,15 @@
 /**
  * 戈尔基康复训练系统云端API客户端
- * 负责与服务器 (36.134.11.254:5002) 的所有数据通信
- * 支持患者信息、训练会话、血氧数据、截图上传
- * 【2025-09-20更新】添加API认证机制
+ * 负责与服务器 (36.134.11.254:5000) 的所有数据通信
+ * 支持患者信息、训练会话、血氧数据、报告上传
+ * 【2024-03-12更新】适配 5000 端口康复专用 API
  */
 
 import { apiClient } from '../utils/apiClient.js'
 import { handleApiError } from '../utils/errorHandler.js'
 
 // 戈尔基云端API配置
-const API_BASE_URL = 'http://36.134.11.254:5002'
+const API_BASE_URL = 'http://36.134.11.254:5000'
 const API_TIMEOUT = 30000 // 30秒超时
 
 /**
@@ -69,58 +69,39 @@ export class GeerjiCloudAPI {
    */
   async uploadPatientProfile(patientData) {
     try {
-      // 生成患者ID（如果没有）
-      const patientId = patientData.patient_id || `PATIENT_${Date.now()}`
-      
-      // 格式化患者数据以匹配数据库schema
-      const formattedData = {
-        patient_id: patientId,
+      // 5000 端口使用 /api/user/register，字段直接扁平化
+      const payload = {
         name: patientData.name || '未知患者',
-        name_masked: this._maskName(patientData.name),
-        age: patientData.age || null,
-        gender: patientData.gender || null,
-        phone: patientData.phone || null,
-        height: patientData.height || null,
-        weight: patientData.weight || null,
-        bmi: patientData.bmi || null,
-        blood_pressure_systolic: patientData.bloodPressure?.systolic || null,
-        blood_pressure_diastolic: patientData.bloodPressure?.diastolic || null,
-        hypertension: patientData.conditions?.hypertension || false,
-        diabetes: patientData.conditions?.diabetes || false,
-        smoking: patientData.conditions?.smoking || false,
-        heart_disease: patientData.conditions?.heartDisease || false,
-        dyslipidemia: patientData.conditions?.dyslipidemia || false,
-        risk_level: patientData.risk_level || this._calculateRiskLevel(patientData),
-        diagnosis: '康复训练评估',
-        onset_time: patientData.onset_time || null
+        age: patientData.age || 0,
+        gender: patientData.gender || '未知',
+        user_id: patientData.patient_id || patientData.user_id // 5000 使用 user_id
       }
 
-      console.log('[戈尔基云端] 上传患者档案:', patientId)
+      console.log('[戈尔基云端] 注册/更新用户:', payload.name)
 
-      const result = await this._request('/api/upload/data', {
+      const result = await this._request('/api/user/register', {
         method: 'POST',
-        body: JSON.stringify({
-          data_type: 'patient_profile',
-          manufacturer: 'golgi',
-          patient_info: JSON.stringify(formattedData)
-        })
+        body: JSON.stringify(payload)
       })
 
       if (result.success) {
-        console.log('[戈尔基云端] 患者档案上传成功')
-        // 保存患者ID到本地，供后续会话使用
-        localStorage.setItem('current_patient_id', patientId)
-        
+        const userId = result.data?.user_id
+        console.log('[戈尔基云端] 用户同步成功ID:', userId)
+        // 保持向后兼容，同时存 patient_id 和 current_session_id 逻辑
+        if (userId) {
+          localStorage.setItem('current_patient_id', userId)
+        }
+
         return {
           success: true,
-          patient_id: patientId,
+          patient_id: userId,
           data: result.data
         }
       } else {
         throw new Error(result.error)
       }
     } catch (error) {
-      console.error('[戈尔基云端] 患者档案上传失败:', error)
+      console.error('[戈尔基云端] 用户同步失败:', error)
       return {
         success: false,
         error: error.message
@@ -135,46 +116,44 @@ export class GeerjiCloudAPI {
    */
   async createTrainingSession(sessionData) {
     try {
-      const sessionId = sessionData.session_id || `SESSION_${Date.now()}`
       const patientId = sessionData.patient_id || localStorage.getItem('current_patient_id')
 
       if (!patientId) {
-        throw new Error('未找到患者ID，请先完成患者信息登记')
+        throw new Error('未找到用户ID，请先完成用户信息登记')
       }
 
-      const formattedSession = {
-        session_id: sessionId,
-        patient_id: patientId,
-        session_start: sessionData.session_start || new Date().toISOString(),
-        training_mode: sessionData.training_mode || 'brain',
-        created_at: new Date().toISOString()
+      const payload = {
+        user_id: patientId,
+        manufacturer: 'golgi',
+        data_version: 'v2.2.0',
+        notes: sessionData.training_mode || 'brain'
       }
 
-      console.log('[戈尔基云端] 创建训练会话:', sessionId)
+      console.log('[戈尔基云端] 开始康复会话，用户:', patientId)
 
-      const result = await this._request('/api/upload/data', {
+      const result = await this._request('/api/rehab/session/start', {
         method: 'POST',
-        body: JSON.stringify({
-          data_type: 'training_session',
-          manufacturer: 'golgi',
-          session_data: JSON.stringify(formattedSession)
-        })
+        body: JSON.stringify(payload)
       })
 
       if (result.success) {
-        console.log('[戈尔基云端] 训练会话创建成功')
-        localStorage.setItem('current_session_id', sessionId)
-        
+        const sessionId = result.data?.session_id
+        console.log('[戈尔基云端] 康复会话创建成功:', sessionId)
+        if (sessionId) {
+          localStorage.setItem('current_session_id', sessionId)
+        }
+
         return {
           success: true,
           session_id: sessionId,
+          session_uuid: result.data?.session_uuid,
           data: result.data
         }
       } else {
         throw new Error(result.error)
       }
     } catch (error) {
-      console.error('[戈尔基云端] 训练会话创建失败:', error)
+      console.error('[戈尔基云端] 康复会话创建失败:', error)
       return {
         success: false,
         error: error.message
@@ -197,33 +176,23 @@ export class GeerjiCloudAPI {
         throw new Error('未找到会话ID，请先开始训练')
       }
 
-      console.log('[戈尔基云端] 上传截图:', screenshotType)
+      console.log('[戈尔基云端] 上传会话报告/截图:', screenshotType)
 
       // 转换Base64为Blob用于文件上传
       const blob = this._dataURLToBlob(screenshotBase64)
       const formData = new FormData()
-      
-      formData.append('data_type', 'screenshot')
-      formData.append('manufacturer', 'golgi')
-      formData.append('session_id', sessionId)
-      formData.append('report_type', screenshotType)
-      formData.append('mime_type', 'image/png')
-      formData.append('metadata', JSON.stringify({
-        type: screenshotType,
-        timestamp: new Date().toISOString(),
-        dimensions: metadata.dimensions || {},
-        file_size: blob.size
-      }))
-      formData.append('screenshot_file', blob, `${screenshotType}_${sessionId}.png`)
 
-      const result = await this._request('/api/upload/data', {
+      formData.append('session_id', sessionId)
+      formData.append('report_file', blob, `${screenshotType}_${sessionId}.pdf`) // 5000 侧重 PDF 报告
+
+      const result = await this._request('/api/rehab/report/upload', {
         method: 'POST',
         headers: {}, // 让浏览器设置Content-Type for FormData
         body: formData
       })
 
       if (result.success) {
-        console.log('[戈尔基云端] 截图上传成功')
+        console.log('[戈尔基云端] 会话报告上传成功')
         return {
           success: true,
           data: result.data
@@ -232,7 +201,7 @@ export class GeerjiCloudAPI {
         throw new Error(result.error)
       }
     } catch (error) {
-      console.error('[戈尔基云端] 截图上传失败:', error)
+      console.error('[戈尔基云端] 会话报告上传失败:', error)
       return {
         success: false,
         error: error.message
@@ -252,7 +221,7 @@ export class GeerjiCloudAPI {
         throw new Error('未找到会话ID，请先开始训练')
       }
 
-      console.log(`[戈尔基云端] 批量上传血氧数据: ${hboDataPoints.length} 个数据点`)
+      console.log(`[戈尔基云端] 批量上传血氧数据(5000): ${hboDataPoints.length} 个数据点`)
 
       const batchData = {
         session_id: sessionId,
@@ -306,32 +275,19 @@ export class GeerjiCloudAPI {
 
       console.log('[戈尔基云端] 完成训练会话:', sessionId)
 
-      // 更新会话完成信息
-      const sessionUpdate = {
-        session_id: sessionId,
-        session_end: new Date().toISOString(),
-        total_duration: completeSessionData.duration || null,
-        hbo_avg: completeSessionData.hbo_avg || null,
-        hbo_max: completeSessionData.hbo_max || null,
-        hbo_min: completeSessionData.hbo_min || null,
-        data_quality_score: completeSessionData.quality_score || null,
-        assessment_summary: completeSessionData.assessment_summary || null
-      }
-
-      const result = await this._request('/api/upload/complete_session', {
+      const result = await this._request('/api/rehab/session/finish', {
         method: 'POST',
         body: JSON.stringify({
-          session_update: sessionUpdate,
-          complete_data: completeSessionData,
-          manufacturer: 'golgi'
+          session_id: sessionId,
+          session_data: completeSessionData // 可选：传递最终统计数据
         })
       })
 
       if (result.success) {
-        console.log('[戈尔基云端] 训练会话完成')
+        console.log('[戈尔基云端] 训练会话已结束并更新')
         // 清理本地会话数据
         localStorage.removeItem('current_session_id')
-        
+
         return {
           success: true,
           data: result.data
@@ -340,7 +296,7 @@ export class GeerjiCloudAPI {
         throw new Error(result.error)
       }
     } catch (error) {
-      console.error('[戈尔基云端] 训练会话完成失败:', error)
+      console.error('[戈尔基云端] 训练会话结束失败:', error)
       return {
         success: false,
         error: error.message
@@ -355,7 +311,7 @@ export class GeerjiCloudAPI {
   async checkConnection() {
     try {
       console.log('[戈尔基云端] 检查服务器连接')
-      
+
       const result = await this._request('/api/health', {
         method: 'GET'
       })
@@ -382,7 +338,7 @@ export class GeerjiCloudAPI {
    */
   _maskName(name) {
     if (!name || name.length < 2) return name
-    
+
     const firstChar = name.charAt(0)
     const maskedPart = '*'.repeat(Math.min(name.length - 1, 9))
     return firstChar + maskedPart
@@ -396,15 +352,15 @@ export class GeerjiCloudAPI {
    */
   _calculateRiskLevel(patientData) {
     let riskScore = 0
-    
+
     // 年龄风险
     if (patientData.age > 65) riskScore += 2
     else if (patientData.age > 45) riskScore += 1
-    
+
     // BMI风险
     if (patientData.bmi > 30) riskScore += 2
     else if (patientData.bmi > 25) riskScore += 1
-    
+
     // 健康状况风险
     const conditions = patientData.conditions || {}
     if (conditions.hypertension) riskScore += 2
@@ -412,7 +368,7 @@ export class GeerjiCloudAPI {
     if (conditions.smoking) riskScore += 1
     if (conditions.heartDisease) riskScore += 3
     if (conditions.dyslipidemia) riskScore += 1
-    
+
     // 风险等级判定
     if (riskScore >= 6) return 'high'
     if (riskScore >= 3) return 'medium'
@@ -431,11 +387,11 @@ export class GeerjiCloudAPI {
     const bstr = atob(arr[1])
     let n = bstr.length
     const u8arr = new Uint8Array(n)
-    
+
     while (n--) {
       u8arr[n] = bstr.charCodeAt(n)
     }
-    
+
     return new Blob([u8arr], { type: mime })
   }
 }

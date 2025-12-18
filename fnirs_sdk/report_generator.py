@@ -567,7 +567,7 @@ def _auto_upload_session_data(processor, patient_info: Dict[str, str], manufactu
             temp_file.close()
             
             # 分离上传到戈尔基云端v4.0 - 使用新的通用数据上传接口
-            api_base_url = "http://36.134.11.254:5002/api/upload/data"
+            api_base_url = "http://36.134.11.254:5000/api/rehab/upload/data"
             
             # 构建患者信息
             patient_data = {

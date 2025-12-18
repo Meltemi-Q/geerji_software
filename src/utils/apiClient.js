@@ -384,7 +384,7 @@ class APIError extends Error {
 
 // 创建默认实例
 export const apiClient = new APIClient({
-  baseURL: 'http://36.134.11.254:5002',
+  baseURL: 'http://36.134.11.254:5000',
   timeout: 30000,
   maxRetries: 3,
   circuitBreaker: true

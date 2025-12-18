@@ -133,7 +133,7 @@ def _upload_fnirs_data(processor, patient_data):
         fnirs_temp_file.close()
         
         # 上传fNIRS数据（修复文件句柄问题）
-        api_url = "http://36.134.11.254:5002/api/upload/data"
+        api_url = "http://36.134.11.254:5000/api/rehab/upload/data"
         
         # 读取文件内容到内存，避免文件句柄冲突
         with open(fnirs_temp_file.name, 'rb') as f:
@@ -200,7 +200,7 @@ def _upload_motion_data(processor, patient_data, manufacturer):
         motion_temp_file.close()
         
         # 上传运动数据（修复文件句柄问题）
-        api_url = "http://36.134.11.254:5002/api/upload/data"
+        api_url = "http://36.134.11.254:5000/api/rehab/upload/data"
         
         # 读取文件内容到内存，避免文件句柄冲突
         with open(motion_temp_file.name, 'rb') as f:
