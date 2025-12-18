@@ -1,0 +1,7 @@
+PLINK_HOST=36.134.11.254
+
+ PLINK_USER=root
+
+ PLINK_PW=Geerji6.
+
+ MYSQL_PW=Geerji4mini.
